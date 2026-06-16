@@ -1,0 +1,14 @@
+[project]
+name = "oslo-eiendom-kart"
+version = "1.0.0"
+description = "Map Oslo kommune's property register by geocoding matrikkel numbers via Geonorge"
+requires-python = ">=3.10"
+dependencies = [
+    "pandas>=2.0",
+    "openpyxl>=3.1",
+    "requests>=2.31",
+]
+
+[tool.poetry]
+# Script-only project: manage dependencies, don't build/install a package.
+package-mode = false
