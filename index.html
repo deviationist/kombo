@@ -143,7 +143,7 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
 }).addTo(map);
 
 let clusterLayer = L.markerClusterGroup({
-  chunkedLoading:true, maxClusterRadius:48, spiderfyOnMaxZoom:true,
+  chunkedLoading:true, maxClusterRadius:22, spiderfyOnMaxZoom:true, disableClusteringAtZoom:16,
   iconCreateFunction(cluster){
     const n = cluster.getChildCount();
     const s = n<10?30:n<100?38:n<1000?46:54;
