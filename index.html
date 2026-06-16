@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Oslo kommunes eiendommer · kart</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.min.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ground:#0e1417; --panel:#161d21; --panel-2:#1d262b; --line:#2a363c;
+    --ink:#e8edf0; --muted:#8a979e;
+    --c-eby:#5fb6b0;   /* Eiendoms- og byfornyelsesetaten */
+    --c-bygg:#e0a54a;  /* Oslobygg KF */
+    --c-bolig:#d4664a; /* Boligbygg Oslo KF */
+    --c-havn:#4f7fd6;  /* Oslo Havn KF */
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--ground);color:var(--ink);
+    font-family:Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+  #app{display:flex;height:100%}
+  #map{flex:1;background:var(--ground)}
+  /* ---- side rail ---- */
+  #rail{width:340px;flex:none;background:var(--panel);border-right:1px solid var(--line);
+    display:flex;flex-direction:column;overflow:hidden}
+  header{padding:20px 20px 14px;border-bottom:1px solid var(--line)}
+  header .eyebrow{font:600 11px/1 Inter;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+  header h1{margin:6px 0 0;font:600 26px/1.05 'Barlow Condensed',sans-serif;letter-spacing:.01em}
+  header p{margin:8px 0 0;font-size:12.5px;color:var(--muted);line-height:1.45}
+  .scroll{overflow-y:auto;padding:16px 20px 24px;flex:1}
+  .scroll::-webkit-scrollbar{width:8px}
+  .scroll::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px}
+  section{margin-bottom:22px}
+  .label{font:600 11px/1 Inter;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-bottom:10px}
+  /* headline figures */
+  .figs{display:flex;gap:18px;margin-bottom:4px}
+  .fig .n{font:600 30px/1 'Barlow Condensed',sans-serif;font-variant-numeric:tabular-nums}
+  .fig .u{font-size:11px;color:var(--muted);margin-top:2px}
+  /* owner toggles + bars */
+  .owner{display:flex;align-items:center;gap:10px;padding:9px 10px;border:1px solid var(--line);
+    border-radius:9px;margin-bottom:7px;cursor:pointer;user-select:none;background:var(--panel-2);
+    transition:border-color .12s,opacity .12s}
+  .owner:hover{border-color:var(--muted)}
+  .owner.off{opacity:.38}
+  .owner .dot{width:11px;height:11px;border-radius:50%;flex:none}
+  .owner .nm{font-size:12.5px;flex:1;line-height:1.25}
+  .owner .ct{font:500 12px/1 Inter;color:var(--muted);font-variant-numeric:tabular-nums}
+  .bar{height:4px;border-radius:3px;margin-top:7px;background:var(--line);overflow:hidden}
+  .bar > i{display:block;height:100%;border-radius:3px}
+  /* select + segmented */
+  select{width:100%;background:var(--panel-2);color:var(--ink);border:1px solid var(--line);
+    border-radius:9px;padding:10px;font:500 13px Inter;appearance:none;cursor:pointer}
+  .seg{display:flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+  .seg button{flex:1;background:var(--panel-2);color:var(--muted);border:0;padding:9px 4px;
+    font:600 12px Inter;cursor:pointer;transition:background .12s,color .12s}
+  .seg button.on{background:var(--ink);color:var(--ground)}
+  /* banner */
+  #banner{display:none;background:#3a2c12;border:1px solid #6b5220;color:#f0d9a8;
+    border-radius:9px;padding:10px 12px;font-size:12px;line-height:1.4;margin-bottom:18px}
+  footer{padding:12px 20px;border-top:1px solid var(--line);font-size:11px;color:var(--muted);line-height:1.5}
+  footer a{color:var(--c-eby)}
+  /* leaflet popup theming */
+  .leaflet-popup-content-wrapper{background:var(--panel-2);color:var(--ink);border-radius:10px;
+    border:1px solid var(--line)}
+  .leaflet-popup-tip{background:var(--panel-2);border:1px solid var(--line)}
+  .leaflet-popup-content{margin:12px 14px;font-size:12.5px;line-height:1.5}
+  .leaflet-popup-content b{font:600 14px 'Barlow Condensed',sans-serif;letter-spacing:.02em}
+  .pk{color:var(--muted)}
+  .leaflet-control-attribution{background:rgba(14,20,23,.8)!important;color:var(--muted)!important}
+  .leaflet-control-attribution a{color:var(--muted)!important}
+  @media (max-width:760px){
+    #app{flex-direction:column}#rail{width:100%;height:46%;border-right:0;border-bottom:1px solid var(--line)}
+    #map{height:54%}
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <aside id="rail">
+    <header>
+      <div class="eyebrow">Oslo kommune · matrikkel mai 2026</div>
+      <h1>Hvor eier kommunen?</h1>
+      <p>7 022 eiendommer fordelt på fire kommunale instanser. Filtrer og se hvor de ligger.</p>
+    </header>
+    <div class="scroll">
+      <div id="banner"></div>
+
+      <section>
+        <div class="label">I visningen nå</div>
+        <div class="figs">
+          <div class="fig"><div class="n" id="fCount">–</div><div class="u">eiendommer</div></div>
+          <div class="fig"><div class="n" id="fArea">–</div><div class="u">daa areal</div></div>
+        </div>
+      </section>
+
+      <section>
+        <div class="label">Eier / fester</div>
+        <div id="owners"></div>
+      </section>
+
+      <section>
+        <div class="label">Bydel</div>
+        <select id="bydel"><option value="">Alle bydeler</option></select>
+      </section>
+
+      <section>
+        <div class="label">Visning</div>
+        <div class="seg" id="mode">
+          <button data-m="clusters" class="on">Punkter</button>
+          <button data-m="heat">Tetthet</button>
+          <button data-m="heatArea">Areal-vekt</button>
+        </div>
+      </section>
+    </div>
+    <footer>
+      Kilde: Oslo kommune, oversikt over kommunens eiendommer (mai 2026).
+      Koordinater fra <a href="https://ws.geonorge.no/adresser/v1/" target="_blank" rel="noopener">Geonorge</a>.
+    </footer>
+  </aside>
+  <div id="map"></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.heat/0.2.0/leaflet-heat.js"></script>
+<script>
+const OWNERS = [
+  {key:"Eiendoms- og byfornyelsesetaten", short:"Eiendoms- og byfornyelsesetaten", color:getComputedStyle(document.documentElement).getPropertyValue('--c-eby').trim()},
+  {key:"Oslobygg KF",       short:"Oslobygg KF",       color:getComputedStyle(document.documentElement).getPropertyValue('--c-bygg').trim()},
+  {key:"Boligbygg Oslo KF", short:"Boligbygg Oslo KF", color:getComputedStyle(document.documentElement).getPropertyValue('--c-bolig').trim()},
+  {key:"Oslo Havn KF",      short:"Oslo Havn KF",      color:getComputedStyle(document.documentElement).getPropertyValue('--c-havn').trim()},
+];
+const colorOf = k => (OWNERS.find(o=>o.key===k)||{color:"#8a979e"}).color;
+const active = new Set(OWNERS.map(o=>o.key));
+let state = {bydel:"", mode:"clusters"};
+let DATA = [];
+
+const map = L.map('map',{preferCanvas:true,zoomControl:true}).setView([59.913,10.74],11);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
+  attribution:'&copy; OpenStreetMap &copy; CARTO', maxZoom:19, subdomains:'abcd'
+}).addTo(map);
+
+let clusterLayer = L.markerClusterGroup({
+  chunkedLoading:true, maxClusterRadius:48, spiderfyOnMaxZoom:true,
+  iconCreateFunction(cluster){
+    const n = cluster.getChildCount();
+    const s = n<10?30:n<100?38:n<1000?46:54;
+    return L.divIcon({html:`<div style="display:flex;align-items:center;justify-content:center;
+      width:${s}px;height:${s}px;border-radius:50%;background:rgba(95,182,176,.18);
+      border:1.5px solid #5fb6b0;color:#e8edf0;font:600 12px Inter">${n}</div>`,
+      className:'', iconSize:[s,s]});
+  }
+});
+let heatLayer = null;
+
+function dot(color){
+  return L.divIcon({className:'',iconSize:[12,12],
+    html:`<div style="width:12px;height:12px;border-radius:50%;background:${color};
+      border:1.5px solid rgba(14,20,23,.9);box-shadow:0 0 0 1px ${color}66"></div>`});
+}
+const fmt = n => n.toLocaleString('nb-NO');
+function popup(p){
+  return `<b>${p.adresse || p.bruksnavn || p.eiendom}</b><br>
+    <span class="pk">Matrikkel</span> ${p.eiendom}<br>
+    <span class="pk">Eier</span> ${p.eier}<br>
+    ${p.bydel?`<span class="pk">Bydel</span> ${p.bydel}<br>`:''}
+    ${p.bruksnavn?`<span class="pk">Bruksnavn</span> ${p.bruksnavn}<br>`:''}
+    ${p.areal!=null?`<span class="pk">Areal</span> ${fmt(Math.round(p.areal))} m²`:''}`;
+}
+
+function filtered(){
+  return DATA.filter(f=>{
+    const p=f.properties;
+    if(!active.has(p.eier)) return false;
+    if(state.bydel && p.bydel!==state.bydel) return false;
+    return true;
+  });
+}
+
+function render(){
+  const rows = filtered();
+  // map layers
+  clusterLayer.clearLayers();
+  if(heatLayer){ map.removeLayer(heatLayer); heatLayer=null; }
+  if(state.mode==='clusters'){
+    const markers = rows.map(f=>{
+      const p=f.properties, c=f.geometry.coordinates;
+      return L.marker([c[1],c[0]],{icon:dot(colorOf(p.eier))}).bindPopup(popup(p));
+    });
+    clusterLayer.addLayers(markers);
+    if(!map.hasLayer(clusterLayer)) map.addLayer(clusterLayer);
+  }else{
+    if(map.hasLayer(clusterLayer)) map.removeLayer(clusterLayer);
+    const areaWeight = state.mode==='heatArea';
+    const maxA = areaWeight ? Math.max(1,...rows.map(f=>f.properties.areal||0)) : 1;
+    const pts = rows.map(f=>{
+      const c=f.geometry.coordinates;
+      const w = areaWeight ? Math.min(1, Math.sqrt((f.properties.areal||0)/maxA)) : .6;
+      return [c[1],c[0],w];
+    });
+    heatLayer = L.heatLayer(pts,{radius:22,blur:18,maxZoom:14,minOpacity:.25,
+      gradient:{0.2:'#173a4a',0.45:'#2d8f86',0.7:'#e0a54a',1:'#d4664a'}}).addTo(map);
+  }
+  updateStats(rows);
+}
+
+function updateStats(rows){
+  document.getElementById('fCount').textContent = fmt(rows.length);
+  const daa = rows.reduce((s,f)=>s+(f.properties.areal||0),0)/1000;
+  document.getElementById('fArea').textContent = fmt(Math.round(daa));
+  // owner bars over the *bydel-filtered* set (independent of owner toggles)
+  const base = DATA.filter(f=>!state.bydel||f.properties.bydel===state.bydel);
+  const counts={}; base.forEach(f=>counts[f.properties.eier]=(counts[f.properties.eier]||0)+1);
+  const max = Math.max(1,...Object.values(counts));
+  OWNERS.forEach(o=>{
+    const el=document.getElementById('own-'+btoa(o.key).slice(0,8));
+    if(!el) return;
+    el.querySelector('.ct').textContent = fmt(counts[o.key]||0);
+    el.querySelector('.bar > i').style.width = ((counts[o.key]||0)/max*100)+'%';
+  });
+}
+
+function buildOwners(){
+  const wrap=document.getElementById('owners');
+  OWNERS.forEach(o=>{
+    const id='own-'+btoa(o.key).slice(0,8);
+    const div=document.createElement('div');
+    div.className='owner'; div.id=id;
+    div.innerHTML=`<span class="dot" style="background:${o.color}"></span>
+      <span class="nm">${o.short}</span><span class="ct">–</span>
+      <div class="bar" style="width:100%"><i style="background:${o.color}"></i></div>`;
+    // bar should sit on its own line full width:
+    div.style.flexWrap='wrap';
+    div.querySelector('.bar').style.flexBasis='100%';
+    div.onclick=()=>{
+      if(active.has(o.key)) active.delete(o.key); else active.add(o.key);
+      div.classList.toggle('off', !active.has(o.key));
+      render();
+    };
+    wrap.appendChild(div);
+  });
+}
+
+function buildBydel(){
+  const set=[...new Set(DATA.map(f=>f.properties.bydel).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'nb'));
+  const sel=document.getElementById('bydel');
+  set.forEach(b=>{const o=document.createElement('option');o.value=b;o.textContent=b;sel.appendChild(o);});
+  sel.onchange=()=>{state.bydel=sel.value; render();
+    if(state.bydel){ const pts=filtered().map(f=>[f.geometry.coordinates[1],f.geometry.coordinates[0]]);
+      if(pts.length) map.fitBounds(pts,{padding:[40,40]}); }
+  };
+}
+
+document.getElementById('mode').addEventListener('click',e=>{
+  const b=e.target.closest('button'); if(!b) return;
+  document.querySelectorAll('#mode button').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on'); state.mode=b.dataset.m; render();
+});
+
+// ---- sample fallback so the map renders before geocode.py is run ----
+const SAMPLE = {type:"FeatureCollection",features:[
+  feat(10.6695,59.9255,"0301-10/68/0/0","Lilleakerveien 49","Ullern","Oslobygg KF","Lilleaker skole",6112.5),
+  feat(10.6643,59.9268,"0301-10/250/0/0","Ullernchausséen 111B","Ullern","Oslobygg KF","Ullern gamlehjem/eldresenter",7080.2),
+  feat(10.6612,59.9241,"0301-10/243/0/0","Sponhoggveien 17","Ullern","Boligbygg Oslo KF","",1566),
+  feat(10.7522,59.9139,"0301-208/350/0/0","Rådhusplassen 1","Sentrum","Eiendoms- og byfornyelsesetaten","Rådhuset",9000),
+  feat(10.7466,59.9075,"0301-207/40/0/0","Akershusstranda 25","Sentrum","Oslo Havn KF","Havnelager",12000),
+  feat(10.7790,59.9110,"0301-234/12/0/0","Grønlandsleiret 25","Gamle Oslo","Boligbygg Oslo KF","",3400),
+  feat(10.7600,59.9230,"0301-209/80/0/0","Storgata 36","Sentrum","Oslobygg KF","Kontorbygg",4200),
+]};
+function feat(lon,lat,eiendom,adresse,bydel,eier,bruksnavn,areal){
+  return {type:"Feature",geometry:{type:"Point",coordinates:[lon,lat]},
+    properties:{eiendom,adresse,bydel,eier,bruksnavn,areal}};
+}
+
+async function boot(){
+  buildOwners();
+  let fc=null;
+  try{
+    const r=await fetch('eiendommer.geojson',{cache:'no-store'});
+    if(r.ok) fc=await r.json();
+  }catch(e){}
+  if(!fc || !fc.features || !fc.features.length){
+    fc=SAMPLE;
+    const b=document.getElementById('banner');
+    b.style.display='block';
+    b.innerHTML='Viser <b>eksempeldata</b>. Kjør <code>geocode.py</code> for å lage '+
+      '<code>eiendommer.geojson</code> og legg den ved siden av denne fila.';
+  }
+  DATA=fc.features;
+  buildBydel();
+  render();
+}
+boot();
+</script>
+</body>
+</html>
