@@ -1,0 +1,102 @@
+name: Sync Oslo property data
+
+# Oslo kommune publishes the property roster twice a year ("Oversikten
+# oppdateres hvert halvår"). Weekly polling is plenty; manual dispatch is
+# there for one-off re-runs.
+on:
+  schedule:
+    - cron: '0 6 * * 1'   # Monday 06:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: write   # needed to push the regenerated geojson back to main
+
+concurrency:
+  group: sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Poetry
+        run: pipx install poetry
+
+      - name: Install dependencies
+        run: poetry install --no-interaction --no-root
+
+      # SQLite geocode cache survives between runs so we only ever pay for
+      # NEW (gnr,bnr) pairs. The cache is rebuildable, so a miss is fine.
+      - name: Restore geocode cache
+        uses: actions/cache@v4
+        with:
+          path: geocode_cache.sqlite
+          key: geocode-cache-v1
+
+      - name: Find latest XLSX link
+        id: find
+        run: |
+          set -euo pipefail
+          page='https://www.oslo.kommune.no/plan-bygg-og-eiendom/kart-og-eiendomsinformasjon/kommunal-eiendom/eiendomsoversikt/'
+          # Two /get-file links on the page (XLSX + PDF). Pick the one whose
+          # anchor text says "(XLSX)" — robust to the hash changing each release.
+          url=$(curl -sSL "$page" | python3 -c '
+          import sys, re
+          html = sys.stdin.read()
+          for m in re.finditer(r"<a[^>]+href=[\"'\''](/get-file/[0-9]+/[a-f0-9]+)[\"'\''][^>]*>(.*?)</a>", html, re.S):
+              text = re.sub(r"<[^>]+>", " ", m.group(2))
+              if "(XLSX)" in text:
+                  print("https://www.oslo.kommune.no" + m.group(1))
+                  break
+          ')
+          if [[ -z "$url" ]]; then
+            echo "::error::no XLSX link found on $page" ; exit 1
+          fi
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "Found: $url"
+
+      - name: Download XLSX
+        id: download
+        run: |
+          set -euo pipefail
+          curl -sSL -o source.xlsx "${{ steps.find.outputs.url }}"
+          # Sanity-check it's actually a spreadsheet (the PDF link has identical
+          # /get-file shape, so a wrong pick would silently produce nonsense).
+          file source.xlsx
+          file source.xlsx | grep -q 'Excel\|Microsoft\|OOXML' || {
+            echo "::error::downloaded file is not XLSX" ; exit 1
+          }
+          sha=$(sha256sum source.xlsx | cut -d' ' -f1)
+          size=$(stat -c%s source.xlsx)
+          echo "sha=$sha"   >> "$GITHUB_OUTPUT"
+          echo "size=$size" >> "$GITHUB_OUTPUT"
+          echo "Downloaded $size bytes, sha256=$sha"
+
+      - name: Geocode
+        run: poetry run python geocode.py source.xlsx
+
+      - name: Commit changes
+        run: |
+          set -euo pipefail
+          git config user.name  'kombo-bot'
+          git config user.email 'kombo-bot@users.noreply.github.com'
+          # Force-add because *.xlsx is gitignored — but we never want the
+          # XLSX in the repo, so only the generated files get staged.
+          git add eiendommer.geojson missing.csv
+          if git diff --staged --quiet; then
+            echo "No changes — nothing to commit."
+            exit 0
+          fi
+          located=$(python3 -c "import json; print(len(json.load(open('eiendommer.geojson'))['features']))")
+          git commit -m "Auto-sync: $located located rows
+
+          Source XLSX sha256: ${{ steps.download.outputs.sha }}
+          Size: ${{ steps.download.outputs.size }} bytes"
+          git push

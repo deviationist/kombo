@@ -1,4 +1,6 @@
 *.xlsx
 *.sqlite
-eiendommer.geojson
-missing.csv
+
+# Playwright artefacts (smoke-test screenshots, traces)
+.playwright-mcp/
+map-*.png
