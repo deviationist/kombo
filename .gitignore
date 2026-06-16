@@ -1,6 +1,9 @@
 *.xlsx
 *.sqlite
 
+# Python bytecode
+__pycache__/
+
 # Playwright artefacts (smoke-test screenshots, traces)
 .playwright-mcp/
 map-*.png
