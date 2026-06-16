@@ -44,20 +44,29 @@ jobs:
         id: find
         run: |
           set -euo pipefail
-          page='https://www.oslo.kommune.no/plan-bygg-og-eiendom/kart-og-eiendomsinformasjon/kommunal-eiendom/eiendomsoversikt/'
-          # Two /get-file links on the page (XLSX + PDF). Pick the one whose
-          # anchor text says "(XLSX)" — robust to the hash changing each release.
-          url=$(curl -sSL "$page" | python3 -c '
-          import sys, re
+          # Load source-page config — page URL, host, anchor marker — so the
+          # workflow stays unchanged when the kommune restructures the page.
+          set -a; source ./source.env; set +a
+          page="${SOURCE_HOST}${SOURCE_PAGE_PATH}"
+          # Match every anchor on the page, pick the one whose visible text
+          # contains XLSX_LINK_MARKER. Href-pattern-agnostic: works whether the
+          # kommune publishes via /get-file/ (current), /getfile.php/ (April
+          # 2025), or some new endpoint they invent in a future CMS migration.
+          url=$(curl -sSL "$page" | python3 -c "$(cat <<'PY'
+          import sys, re, os
           html = sys.stdin.read()
-          for m in re.finditer(r"<a[^>]+href=[\"'\''](/get-file/[0-9]+/[a-f0-9]+)[\"'\''][^>]*>(.*?)</a>", html, re.S):
-              text = re.sub(r"<[^>]+>", " ", m.group(2))
-              if "(XLSX)" in text:
-                  print("https://www.oslo.kommune.no" + m.group(1))
+          marker = os.environ['XLSX_LINK_MARKER']
+          host   = os.environ['SOURCE_HOST']
+          for m in re.finditer(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>', html, re.S):
+              href = m.group(1)
+              text = re.sub(r'<[^>]+>', ' ', m.group(2))
+              if marker in text:
+                  print(href if href.startswith('http') else host + href)
                   break
-          ')
+          PY
+          )")
           if [[ -z "$url" ]]; then
-            echo "::error::no XLSX link found on $page" ; exit 1
+            echo "::error::no anchor matching '${XLSX_LINK_MARKER}' on $page" ; exit 1
           fi
           echo "url=$url" >> "$GITHUB_OUTPUT"
           echo "Found: $url"
