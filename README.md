@@ -1,29 +1,33 @@
-# Oslo kommunes eiendommer → kart
+# KomBo — Oslo kommunes boliger på kart
 
-A two-step pipeline that turns the municipal property spreadsheet into an
-interactive map showing **where Oslo kommune owns land and buildings**.
+A two-step pipeline that maps **Oslo kommune's municipal housing** — the places
+the city owns where people actually live.
 
 ```
 XLSX ──(geocode.py)──> eiendommer.geojson ──(index.html)──> map in browser
 ```
 
-## What the data actually is (read this first)
+## Scope: housing only
 
-The spreadsheet lists **7 022 properties, all owned by Oslo kommune** — split
-across four municipal bodies:
+The source spreadsheet lists all 7,022 municipally-owned properties across four
+agencies, but most of that is land and road parcels. KomBo filters to the
+housing stock via `INCLUDE_EIER` in `geocode.py`:
 
-| Eier / fester | Antall | Rolle |
+| Eier / fester | Antall | In scope? |
 |---|---|---|
-| Eiendoms- og byfornyelsesetaten | 5 621 | Land, road parcels, urban-renewal sites |
-| Oslobygg KF | 795 | Public buildings (schools, care homes, offices) |
-| Boligbygg Oslo KF | 528 | Municipal housing |
-| Oslo Havn KF | 78 | Harbour / port |
+| **Boligbygg Oslo KF** | **528** | ✅ municipal housing (default) |
+| Oslobygg KF | 795 | public buildings — schools, offices, ~5 care homes |
+| Eiendoms- og byfornyelsesetaten | 5,621 | land + road parcels |
+| Oslo Havn KF | 78 | harbour |
 
-So this file answers *"which areas does the municipality own, and through which
-agency?"* — but it **cannot** show what's owned by private people or housing
-associations (borettslag/sameier). That data isn't in here. To compare municipal
-vs. private ownership you'd need the full **Matrikkel** ownership register from
-Kartverket (the spreadsheet is just the municipality's own slice of it).
+The 528 Boligbygg rows dedupe to **356 unique (gnr, bnr) pairs** and **91% have
+a registered address**, so geocoding runs in about a minute with near-complete
+coverage. (199 rows are *eierseksjoner* — individual flats — that share a
+building's gnr/bnr, so they map to the same point. Fine for a coverage view.)
+
+To widen the net to municipal care/senior homes (gamlehjem, eldresenter,
+sykehjem, trygdebolig — a handful under Oslobygg KF), add the agency to
+`INCLUDE_EIER`. To map the entire register instead, set `INCLUDE_EIER = []`.
 
 ## Why geocoding is needed
 
@@ -66,20 +70,16 @@ with the venv active instead of prefixing every command: `poetry shell` (or the
 `index.html` already renders with a small sample if `eiendommer.geojson` isn't
 there yet, so you can see the UI before geocoding finishes.
 
-## Coverage and the road-land gap
+## Coverage
 
-~2 200 rows have a street address and geocode cleanly. The other ~4 800 are
-mostly **veigrunn** (road land) and **uregistrert grunn** (unregistered land)
-that simply have *no* address — those land in `missing.csv`.
-
-To map those too you need the **parcel geometry** (the polygon), not an address.
-The source is Kartverket's *"Matrikkelen – Eiendomskart Teig"* dataset, available
-as WFS/WMS via Geonorge, keyed on the matrikkelnummer. That route gives you the
-actual lot outlines (better than points for an area/ownership view) but is
-heavier to wire up and the exact WFS filter syntax is worth verifying against the
-current Geonorge service description before you build on it. The geocoder is
-structured so you can add a second resolver for the missing pairs without
-touching the rest.
+With the housing filter, ~91% of rows geocode by address — the missing handful
+land in `missing.csv`. (Across the *full* register it's only ~28%, because road
+land and unregistered land have no address; that's why scoping to housing fixes
+the coverage problem rather than needing parcel polygons.) If you do switch to
+the full register later and want the road/land parcels too, you'd resolve those
+against Kartverket's *"Matrikkelen – Eiendomskart Teig"* WFS keyed on the
+matrikkelnummer — the geocoder is structured so a second resolver for the
+missing pairs slots in without touching the rest.
 
 ## The map (`index.html`)
 
