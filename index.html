@@ -6,6 +6,15 @@
 <title>Oslo kommunes eiendommer · kart</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.min.css" />
+<script>
+  // FOUC guard: read rail-collapsed from localStorage before first paint so
+  // the sidebar starts in its saved state instead of expanding then snapping
+  // shut on load. Runs synchronously before <body> parses.
+  try {
+    const s = JSON.parse(localStorage.getItem('kombo.v1') || '{}');
+    if (s.railCollapsed) document.documentElement.classList.add('rail-collapsed');
+  } catch (e) {}
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -20,11 +29,40 @@
   *{box-sizing:border-box}
   html,body{margin:0;height:100%;background:var(--ground);color:var(--ink);
     font-family:Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
-  #app{display:flex;height:100%}
-  #map{flex:1;background:var(--ground)}
-  /* ---- side rail ---- */
-  #rail{width:340px;flex:none;background:var(--panel);border-right:1px solid var(--line);
-    display:flex;flex-direction:column;overflow:hidden}
+  /* Map fills the viewport at all times. Sidebar is an overlay on the left
+     edge — nothing reflows on collapse, Leaflet never resizes, no tile snap. */
+  #app{position:relative;width:100%;height:100%}
+  #map{position:absolute;inset:0;background:var(--ground)}
+  #rail{position:absolute;top:0;left:0;bottom:0;width:340px;z-index:500;
+    background:var(--panel);border-right:1px solid var(--line);
+    display:flex;flex-direction:column;overflow:hidden;
+    transition:transform .22s ease}
+  /* Pre-applied to <html> by the FOUC-guard <head> script so the rail
+     starts pre-collapsed without animation on load. */
+  .rail-collapsed #rail{transform:translateX(-100%)}
+  /* Leaflet's top-left controls (zoom +/-) slide with the rail so they sit
+     just outside the rail's right edge when open, and at the viewport's
+     left edge when collapsed. Same easing as the rail keeps them in sync. */
+  .leaflet-top.leaflet-left{transition:transform .22s ease}
+  html:not(.rail-collapsed) .leaflet-top.leaflet-left{transform:translateX(340px)}
+  /* Vertically-centred, just outside the rail's right edge so it can never
+     collide with Leaflet's corner controls (zoom topleft, layers topright). */
+  #rail-toggle{position:absolute;top:50%;left:340px;transform:translateY(-50%);
+    z-index:1000;width:22px;height:54px;border-radius:0 6px 6px 0;cursor:pointer;
+    background:var(--panel-2);border:1px solid var(--line);border-left:0;color:var(--muted);
+    font:600 14px/1 Inter;display:flex;align-items:center;justify-content:center;
+    transition:left .18s ease,background .12s ease,color .12s ease;
+    box-shadow:2px 0 6px rgba(0,0,0,.25)}
+  #rail-toggle:hover{background:var(--panel);color:var(--ink)}
+  /* Collapsed: high-contrast teal pill so users can spot the "give me the
+     sidebar back" handle on any basemap (esp. busy satellite imagery). */
+  .rail-collapsed #rail-toggle{
+    left:0;
+    background:var(--c-eby);color:var(--ground);
+    border-color:var(--c-eby);
+    box-shadow:2px 0 12px rgba(95,182,176,.55), 0 0 0 1px rgba(255,255,255,.18)
+  }
+  .rail-collapsed #rail-toggle:hover{background:#7cc8c3;color:var(--ground)}
   header{padding:20px 20px 14px;border-bottom:1px solid var(--line)}
   header .eyebrow{font:600 11px/1 Inter;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
   header h1{margin:6px 0 0;font:600 26px/1.05 'Barlow Condensed',sans-serif;letter-spacing:.01em}
@@ -44,8 +82,9 @@
     transition:border-color .12s,opacity .12s}
   .owner:hover{border-color:var(--muted)}
   .owner.off{opacity:.38}
-  .owner .dot{width:11px;height:11px;border-radius:50%;flex:none}
+  .owner .dot{width:11px;height:11px;border-radius:50%;flex:none;align-self:flex-start;margin-top:3px}
   .owner .nm{font-size:12.5px;flex:1;line-height:1.25}
+  .owner .desc{flex-basis:100%;margin-left:21px;margin-top:4px;color:var(--muted);font-size:11.5px;line-height:1.35}
   .owner .ct{font:500 12px/1 Inter;color:var(--muted);font-variant-numeric:tabular-nums}
   .bar{height:4px;border-radius:3px;margin-top:7px;background:var(--line);overflow:hidden}
   .bar > i{display:block;height:100%;border-radius:3px}
@@ -68,6 +107,8 @@
   .leaflet-popup-content{margin:12px 14px;font-size:12.5px;line-height:1.5}
   .leaflet-popup-content b{font:600 14px 'Barlow Condensed',sans-serif;letter-spacing:.02em}
   .pk{color:var(--muted)}
+  .sv-link{display:inline-block;margin-top:6px;color:var(--c-eby);text-decoration:none;font-size:12px;font-weight:500}
+  .sv-link:hover{text-decoration:underline}
   .leaflet-control-attribution{background:rgba(14,20,23,.8)!important;color:var(--muted)!important}
   .leaflet-control-attribution a{color:var(--muted)!important}
   @media (max-width:760px){
@@ -120,6 +161,7 @@
     </footer>
   </aside>
   <div id="map"></div>
+  <button id="rail-toggle" type="button" title="Skjul/vis sidepanelet" aria-label="Skjul/vis sidepanelet">‹</button>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
@@ -127,47 +169,124 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.heat/0.2.0/leaflet-heat.js"></script>
 <script>
 const OWNERS = [
-  {key:"Eiendoms- og byfornyelsesetaten", short:"Eiendoms- og byfornyelsesetaten", color:getComputedStyle(document.documentElement).getPropertyValue('--c-eby').trim()},
-  {key:"Oslobygg KF",       short:"Oslobygg KF",       color:getComputedStyle(document.documentElement).getPropertyValue('--c-bygg').trim()},
-  {key:"Boligbygg Oslo KF", short:"Boligbygg Oslo KF", color:getComputedStyle(document.documentElement).getPropertyValue('--c-bolig').trim()},
-  {key:"Oslo Havn KF",      short:"Oslo Havn KF",      color:getComputedStyle(document.documentElement).getPropertyValue('--c-havn').trim()},
+  {key:"Eiendoms- og byfornyelsesetaten", short:"Eiendoms- og byfornyelsesetaten",
+   desc:"Forvalter grunneiendom og veigrunn — den største eieren, mest tomter og veiareal.",
+   color:getComputedStyle(document.documentElement).getPropertyValue('--c-eby').trim()},
+  {key:"Oslobygg KF",       short:"Oslobygg KF",
+   desc:"Bygger og drifter formålsbygg: skoler, barnehager, sykehjem, idrettsanlegg, kontorer.",
+   color:getComputedStyle(document.documentElement).getPropertyValue('--c-bygg').trim()},
+  {key:"Boligbygg Oslo KF", short:"Boligbygg Oslo KF",
+   desc:"Eier og leier ut kommunale boliger — særlig til personer som trenger hjelp i boligmarkedet.",
+   color:getComputedStyle(document.documentElement).getPropertyValue('--c-bolig').trim()},
+  {key:"Oslo Havn KF",      short:"Oslo Havn KF",
+   desc:"Drifter havnevirksomheten og forvalter eiendommene langs sjøsiden.",
+   color:getComputedStyle(document.documentElement).getPropertyValue('--c-havn').trim()},
 ];
 const colorOf = k => (OWNERS.find(o=>o.key===k)||{color:"#8a979e"}).color;
 const active = new Set(OWNERS.map(o=>o.key));
-let state = {bydel:"", mode:"clusters"};
+let state = {bydel:"", mode:"clusters", base:"dark", center:[59.913,10.74], zoom:11, railCollapsed:false};
 let DATA = [];
 
-const map = L.map('map',{preferCanvas:true,zoomControl:true}).setView([59.913,10.74],11);
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
+// ---- localStorage persistence ---------------------------------------------
+// Selections (bydel, mode, owner toggles, base layer) survive reload.
+const STORAGE_KEY = 'kombo.v1';
+function loadState(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY); if(!raw) return;
+    const s = JSON.parse(raw);
+    if(typeof s.bydel === 'string') state.bydel = s.bydel;
+    if(['clusters','heat','heatArea'].includes(s.mode)) state.mode = s.mode;
+    if(['dark','sat'].includes(s.base)) state.base = s.base;
+    if(Array.isArray(s.center) && s.center.length===2 &&
+       s.center.every(n => typeof n === 'number' && isFinite(n))){
+      state.center = s.center;
+    }
+    if(typeof s.zoom === 'number' && s.zoom >= 0 && s.zoom <= 22) state.zoom = s.zoom;
+    if(typeof s.railCollapsed === 'boolean') state.railCollapsed = s.railCollapsed;
+    if(Array.isArray(s.active)){
+      active.clear();
+      s.active.filter(k => OWNERS.some(o => o.key===k)).forEach(k => active.add(k));
+      // If all four were untoggled in storage (e.g. accidental clear), bring
+      // them back rather than render an empty map.
+      if(active.size === 0) OWNERS.forEach(o => active.add(o.key));
+    }
+  }catch(e){ /* corrupt JSON / unavailable storage — ignore */ }
+}
+function saveState(){
+  try{
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      bydel: state.bydel, mode: state.mode, base: state.base, active: [...active],
+      center: state.center, zoom: state.zoom, railCollapsed: state.railCollapsed,
+    }));
+  }catch(e){ /* private mode etc. */ }
+}
+loadState();
+
+const map = L.map('map',{preferCanvas:true,zoomControl:true}).setView(state.center, state.zoom);
+map.on('moveend zoomend', () => {
+  const c = map.getCenter();
+  state.center = [c.lat, c.lng];
+  state.zoom = map.getZoom();
+  saveState();
+});
+const darkLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
   attribution:'&copy; OpenStreetMap &copy; CARTO', maxZoom:19, subdomains:'abcd'
-}).addTo(map);
+});
+const satLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{
+  attribution:'Tiles &copy; Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community', maxZoom:19
+});
+(state.base==='sat'?satLayer:darkLayer).addTo(map);
+L.control.layers({'Mørk': darkLayer, 'Satellitt': satLayer}, {}, {position:'topright', collapsed:true}).addTo(map);
+map.on('baselayerchange', e => { state.base = (e.name==='Satellitt' ? 'sat' : 'dark'); saveState(); });
 
 let clusterLayer = L.markerClusterGroup({
   chunkedLoading:true, maxClusterRadius:22, spiderfyOnMaxZoom:true, disableClusteringAtZoom:16,
+  showCoverageOnHover:false,   // convex-hull hint is more confusing than informing, esp. once real parcel polygons render
   iconCreateFunction(cluster){
     const n = cluster.getChildCount();
     const s = n<10?30:n<100?38:n<1000?46:54;
+    // Solid teal fill + dark text + white-ish outer halo. Works on the dark
+    // basemap (subtle accent) and on satellite imagery (high contrast).
     return L.divIcon({html:`<div style="display:flex;align-items:center;justify-content:center;
-      width:${s}px;height:${s}px;border-radius:50%;background:rgba(95,182,176,.18);
-      border:1.5px solid #5fb6b0;color:#e8edf0;font:600 12px Inter">${n}</div>`,
+      width:${s}px;height:${s}px;border-radius:50%;
+      background:#5fb6b0;color:#0e1417;
+      border:2px solid rgba(255,255,255,.85);
+      box-shadow:0 0 0 1px rgba(14,20,23,.5), 0 2px 6px rgba(0,0,0,.45);
+      font:700 12px Inter">${n}</div>`,
       className:'', iconSize:[s,s]});
   }
 });
 let heatLayer = null;
+let polyLayer = null;
 
 function dot(color){
-  return L.divIcon({className:'',iconSize:[12,12],
-    html:`<div style="width:12px;height:12px;border-radius:50%;background:${color};
-      border:1.5px solid rgba(14,20,23,.9);box-shadow:0 0 0 1px ${color}66"></div>`});
+  // White halo + dark inner ring keeps the dot legible on both the dark
+  // basemap and satellite imagery (where coloured dots wash out on grass/snow).
+  return L.divIcon({className:'',iconSize:[14,14],
+    html:`<div style="width:14px;height:14px;border-radius:50%;background:${color};
+      border:2px solid rgba(255,255,255,.92);
+      box-shadow:0 0 0 1px rgba(14,20,23,.6), 0 1px 4px rgba(0,0,0,.45)"></div>`});
 }
 const fmt = n => n.toLocaleString('nb-NO');
-function popup(p){
+// First vertex of a polygon ring — good-enough anchor for a Street View link
+// and the heat-layer weight position.
+function geomAnchor(g){
+  if (g.type === 'Point') return g.coordinates;             // [lon, lat]
+  if (g.type === 'Polygon') return g.coordinates[0][0];
+  if (g.type === 'MultiPolygon') return g.coordinates[0][0][0];
+  return null;
+}
+function popup(p, anchor){
+  const sv = anchor
+    ? `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${anchor[1]},${anchor[0]}`
+    : null;
   return `<b>${p.adresse || p.bruksnavn || p.eiendom}</b><br>
     <span class="pk">Matrikkel</span> ${p.eiendom}<br>
     <span class="pk">Eier</span> ${p.eier}<br>
     ${p.bydel?`<span class="pk">Bydel</span> ${p.bydel}<br>`:''}
     ${p.bruksnavn?`<span class="pk">Bruksnavn</span> ${p.bruksnavn}<br>`:''}
-    ${p.areal!=null?`<span class="pk">Areal</span> ${fmt(Math.round(p.areal))} m²`:''}`;
+    ${p.areal!=null?`<span class="pk">Areal</span> ${fmt(Math.round(p.areal))} m²`:''}
+    ${sv?`<br><a class="sv-link" href="${sv}" target="_blank" rel="noopener">Street View ↗</a>`:''}`;
 }
 
 function filtered(){
@@ -181,13 +300,33 @@ function filtered(){
 
 function render(){
   const rows = filtered();
-  // map layers
+  // Clear all data layers — they're re-attached per mode below.
   clusterLayer.clearLayers();
   if(heatLayer){ map.removeLayer(heatLayer); heatLayer=null; }
+  if(polyLayer){ map.removeLayer(polyLayer); polyLayer=null; }
+
+  const points = rows.filter(f=>f.geometry.type==='Point');
+  const polys  = rows.filter(f=>f.geometry.type!=='Point');
+
+  // Polygon layer is shared across modes — parcel outlines are always
+  // informative; they don't cluster meaningfully and they don't make sense to
+  // render as heat alone.
+  if(polys.length){
+    polyLayer = L.geoJSON({type:'FeatureCollection', features:polys}, {
+      style: f => {
+        const c = colorOf(f.properties.eier);
+        return {color:c, weight:1.6, fillColor:c, fillOpacity:0.32, opacity:0.95};
+      },
+      onEachFeature: (f, layer) => {
+        layer.bindPopup(popup(f.properties, geomAnchor(f.geometry)));
+      }
+    }).addTo(map);
+  }
+
   if(state.mode==='clusters'){
-    const markers = rows.map(f=>{
+    const markers = points.map(f=>{
       const p=f.properties, c=f.geometry.coordinates;
-      return L.marker([c[1],c[0]],{icon:dot(colorOf(p.eier))}).bindPopup(popup(p));
+      return L.marker([c[1],c[0]],{icon:dot(colorOf(p.eier))}).bindPopup(popup(p,c));
     });
     clusterLayer.addLayers(markers);
     if(!map.hasLayer(clusterLayer)) map.addLayer(clusterLayer);
@@ -195,10 +334,12 @@ function render(){
     if(map.hasLayer(clusterLayer)) map.removeLayer(clusterLayer);
     const areaWeight = state.mode==='heatArea';
     const maxA = areaWeight ? Math.max(1,...rows.map(f=>f.properties.areal||0)) : 1;
+    // Use geomAnchor so polygons contribute to the heat layer too (anchored
+    // at their first vertex — fine for a density view).
     const pts = rows.map(f=>{
-      const c=f.geometry.coordinates;
+      const a = geomAnchor(f.geometry); // [lon, lat]
       const w = areaWeight ? Math.min(1, Math.sqrt((f.properties.areal||0)/maxA)) : .6;
-      return [c[1],c[0],w];
+      return [a[1],a[0],w];
     });
     heatLayer = L.heatLayer(pts,{radius:22,blur:18,maxZoom:14,minOpacity:.25,
       gradient:{0.2:'#173a4a',0.45:'#2d8f86',0.7:'#e0a54a',1:'#d4664a'}}).addTo(map);
@@ -230,14 +371,16 @@ function buildOwners(){
     div.className='owner'; div.id=id;
     div.innerHTML=`<span class="dot" style="background:${o.color}"></span>
       <span class="nm">${o.short}</span><span class="ct">–</span>
+      ${o.desc ? `<div class="desc">${o.desc}</div>` : ''}
       <div class="bar" style="width:100%"><i style="background:${o.color}"></i></div>`;
     // bar should sit on its own line full width:
     div.style.flexWrap='wrap';
     div.querySelector('.bar').style.flexBasis='100%';
+    div.classList.toggle('off', !active.has(o.key));      // restore from storage
     div.onclick=()=>{
       if(active.has(o.key)) active.delete(o.key); else active.add(o.key);
       div.classList.toggle('off', !active.has(o.key));
-      render();
+      saveState(); render();
     };
     wrap.appendChild(div);
   });
@@ -247,16 +390,40 @@ function buildBydel(){
   const set=[...new Set(DATA.map(f=>f.properties.bydel).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'nb'));
   const sel=document.getElementById('bydel');
   set.forEach(b=>{const o=document.createElement('option');o.value=b;o.textContent=b;sel.appendChild(o);});
-  sel.onchange=()=>{state.bydel=sel.value; render();
-    if(state.bydel){ const pts=filtered().map(f=>[f.geometry.coordinates[1],f.geometry.coordinates[0]]);
-      if(pts.length) map.fitBounds(pts,{padding:[40,40]}); }
+  if(state.bydel && set.includes(state.bydel)) sel.value = state.bydel;  // restore
+  sel.onchange=()=>{
+    state.bydel=sel.value; saveState(); render();
+    if(state.bydel){
+      // Use geomAnchor so polygon features also count toward the fitBounds.
+      const pts=filtered().map(f=>{ const a=geomAnchor(f.geometry); return [a[1],a[0]]; });
+      if(pts.length) map.fitBounds(pts,{padding:[40,40]});
+    }
   };
 }
 
+// Sidebar collapse/expand — apply saved state and wire the toggle.
+const railToggle = document.getElementById('rail-toggle');
+function applyRailState(){
+  // Toggle on <html> so the same selector matches both the head script's
+  // pre-paint application AND the runtime click.
+  document.documentElement.classList.toggle('rail-collapsed', state.railCollapsed);
+  railToggle.textContent = state.railCollapsed ? '›' : '‹';
+}
+applyRailState();
+railToggle.addEventListener('click', () => {
+  state.railCollapsed = !state.railCollapsed;
+  applyRailState();
+  saveState();
+  // No invalidateSize needed — the map container is fixed-size; only the
+  // overlay rail moves. That's the whole point of this layout.
+});
+
+// Restore mode-button .on state from storage before wiring the click handler.
+document.querySelectorAll('#mode button').forEach(b => b.classList.toggle('on', b.dataset.m === state.mode));
 document.getElementById('mode').addEventListener('click',e=>{
   const b=e.target.closest('button'); if(!b) return;
   document.querySelectorAll('#mode button').forEach(x=>x.classList.remove('on'));
-  b.classList.add('on'); state.mode=b.dataset.m; render();
+  b.classList.add('on'); state.mode=b.dataset.m; saveState(); render();
 });
 
 // ---- sample fallback so the map renders before geocode.py is run ----
