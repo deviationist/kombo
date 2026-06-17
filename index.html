@@ -723,18 +723,22 @@ function listPopupHTML(p, siblings){
 }
 
 function detailPopupHTML(p, anchor, siblings){
-  // Street View link. Google's official Maps URLs API only lets us position
-  // Street View by lat/lon (`viewpoint=LAT,LON`), which snaps to the nearest
-  // existing panorama and can land you on a neighbouring building. The
-  // legacy `?q=ADDRESS&layer=c` URL takes a text query plus a "Street View
-  // layer" hint, and is much more accurate when we have a real address
-  // string from Geonorge. Prefer address; fall back to lat/lon.
+  // Three links, when their inputs are available:
+  //   gmapsAddr — Google Maps centred on the address (always more accurate
+  //     than coord-based when we have a real address from Geonorge; user
+  //     gets pegman one click away for Street View)
+  //   sv — direct Street View pano at the lat/lon anchor (the official
+  //     /maps/@?api=1&map_action=pano URL). Snaps to the nearest existing
+  //     panorama — sometimes wrong building, but works without an address
+  //   gb — Grunnboken (eiendomsregisteret.kartverket.no), when the matrikkel
+  //     is parseable
   const addr = (p.adresse || '').trim();
-  const sv = addr
-    ? `https://www.google.com/maps?q=${encodeURIComponent(`${addr}${p.postnummer ? `, ${p.postnummer}` : ''}${p.poststed ? ' ' + p.poststed : ''}`)}&layer=c`
-    : (anchor
-        ? `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${anchor[1]},${anchor[0]}`
-        : null);
+  const gmapsAddr = addr
+    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${addr}${p.postnummer ? `, ${p.postnummer}` : ''}${p.poststed ? ' ' + p.poststed : ''}`)}`
+    : null;
+  const sv = anchor
+    ? `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${anchor[1]},${anchor[0]}`
+    : null;
   const mt = parseMatrikkel(p.eiendom);
   const gb = mt ? grunnbokenUrl(mt.knr, mt.gnr, mt.bnr) : null;
   // "0284 OSLO" line under the street address — only when Geonorge gave us
@@ -772,8 +776,10 @@ function detailPopupHTML(p, anchor, siblings){
     ${p.bruksnavn && !GENERIC_BRUKSNAVN.has(p.bruksnavn.trim())?`<span class="pk">Bruksnavn</span> ${p.bruksnavn}<br>`:''}
     ${p.areal!=null?`<span class="pk">Areal</span> ${fmt(Math.round(p.areal))} m²`:''}
     <div style="margin-top:6px">
+      ${gmapsAddr?`<a class="sv-link" href="${gmapsAddr}" target="_blank" rel="noopener">Google Maps ↗</a>`:''}
+      ${gmapsAddr && sv?' · ':''}
       ${sv?`<a class="sv-link" href="${sv}" target="_blank" rel="noopener">Street View ↗</a>`:''}
-      ${sv && gb?' · ':''}
+      ${(gmapsAddr||sv) && gb?' · ':''}
       ${gb?`<a class="sv-link" href="${gb}" target="_blank" rel="noopener">Grunnboken ↗</a>`:''}
     </div>`;
 }
