@@ -4,6 +4,9 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>KomBo · Oslo kommunes eiendommer på kart</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="favicon.svg" />
+<meta name="theme-color" content="#d4664a" />
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.min.css" />
 <script src="https://cdn.tailwindcss.com"></script>
@@ -144,13 +147,15 @@
     transition:right .18s ease,background .12s ease,color .12s ease;
     box-shadow:-2px 0 6px rgba(0,0,0,.25)}
   #rail-r-toggle:hover{background:var(--panel);color:var(--ink)}
+  /* Collapsed handle matches the left rail's teal pill (was magenta --c-pin)
+     so both "give me the sidebar back" handles read as the same control. */
   .rail-r-collapsed #rail-r-toggle{
     right:0;
-    background:var(--c-pin);color:var(--ground);
-    border-color:var(--c-pin);
-    box-shadow:-2px 0 12px rgba(211,72,160,.55), 0 0 0 1px rgba(255,255,255,.18)
+    background:var(--c-eby);color:var(--ground);
+    border-color:var(--c-eby);
+    box-shadow:-2px 0 12px rgba(95,182,176,.55), 0 0 0 1px rgba(255,255,255,.18)
   }
-  .rail-r-collapsed #rail-r-toggle:hover{background:#dd5fb1;color:var(--ground)}
+  .rail-r-collapsed #rail-r-toggle:hover{background:#7cc8c3;color:var(--ground)}
   header{padding:20px 20px 14px;border-bottom:1px solid var(--line);position:relative}
   /* In-rail × close buttons — small + low-contrast, similar to seg-btn. */
   .rail-close{position:absolute;top:14px;width:20px;height:20px;border-radius:5px;
@@ -475,6 +480,14 @@
         <div id="owners"></div>
       </section>
 
+      <section id="utenbys-section">
+        <div class="label">Andre lag</div>
+        <label class="toggle-row" title="Eiendommer Oslo kommune eier UTENFOR Oslo — marka- og vannverkseiendommer i nabokommuner (Nordre Follo, Enebakk, Ringerike, …). Egen oppslag mot Kartverket; ikke med i bydels- eller arealstatistikken.">
+          <input type="checkbox" id="show-utenbys">
+          <span>Eiendommer utenfor Oslo <span class="ct" id="utenbys-count"></span></span>
+        </label>
+      </section>
+
       <section>
         <div class="label">Bydel</div>
         <select id="bydel"><option value="">Alle bydeler</option></select>
@@ -602,6 +615,7 @@ let state = {bydel:"", mode:"clusters",
              center:[59.913,10.74], zoom:11,
              railCollapsed:false, railRCollapsed:false,
              modeInfoOpen:false, showPolygons:true,
+             showUtenbys:false,         // toggle the out-of-Oslo ("utenbys") layer
              distanceMode:'edge',       // 'edge' (to nearest tomtekant) | 'marker' (to address point)
              listSort:'addr', listBboxOnly:false};
 let DATA = [];
@@ -625,6 +639,7 @@ function loadState(){
     if(typeof s.railRCollapsed === 'boolean') state.railRCollapsed = s.railRCollapsed;
     if(typeof s.modeInfoOpen === 'boolean') state.modeInfoOpen = s.modeInfoOpen;
     if(typeof s.showPolygons === 'boolean') state.showPolygons = s.showPolygons;
+    if(typeof s.showUtenbys === 'boolean') state.showUtenbys = s.showUtenbys;
     if(s.distanceMode === 'edge' || s.distanceMode === 'marker') state.distanceMode = s.distanceMode;
     if(Array.isArray(s.active)){
       // An empty array IS a valid explicit choice — the user untoggled
@@ -643,6 +658,7 @@ function saveState(){
       railCollapsed: state.railCollapsed, railRCollapsed: state.railRCollapsed,
       modeInfoOpen: state.modeInfoOpen,
       showPolygons: state.showPolygons,
+      showUtenbys: state.showUtenbys,
       distanceMode: state.distanceMode,
     }));
   }catch(e){ /* private mode etc. */ }
@@ -672,6 +688,7 @@ function urlFromState(){
   if (state.base !== 'dark')      p.set('base', state.base);
   if (state.bydel)                p.set('bydel', state.bydel);
   if (state.showPolygons === false) p.set('teig', '0');
+  if (state.showUtenbys === true) p.set('utb', '1');
   if (state.distanceMode !== 'edge') p.set('dm', state.distanceMode);
   // Always emit `own` — empty array (= no agencies) is a meaningful state.
   p.set('own', [...active].map(k => OWNER_CODE[k]).filter(Boolean).join(','));
@@ -700,6 +717,7 @@ function applyUrlHash(){
   const b = p.get('base'); if (['dark','light','sat'].includes(b)) state.base = b;
   if (p.has('bydel'))      state.bydel = p.get('bydel') || '';
   const teig = p.get('teig'); if (teig === '0') state.showPolygons = false; if (teig === '1') state.showPolygons = true;
+  const utb = p.get('utb'); if (utb === '1') state.showUtenbys = true; if (utb === '0') state.showUtenbys = false;
   const dm = p.get('dm');  if (dm === 'edge' || dm === 'marker') state.distanceMode = dm;
   if (p.has('own')) {
     active.clear();
@@ -923,6 +941,8 @@ function detailPopupHTML(p, anchor, siblings){
     ${post ? `<div class="pk" style="margin-top:2px">${post}</div>` : '<br>'}
     <span class="pk">Matrikkel</span> ${p.eiendom}<br>
     <span class="pk">Eier</span> ${p.eier}<br>
+    ${p.utenbys&&p.kommune?`<span class="pk">Kommune</span> ${p.kommune} <span class="pk" style="opacity:.7">(utenfor Oslo)</span><br>`:''}
+    ${p.utenbys&&p.matrikkelenhetstype?`<span class="pk">Type</span> ${p.matrikkelenhetstype}<br>`:''}
     ${p.bydel?`<span class="pk">Bydel</span> ${p.bydel}<br>`:''}
     ${p.bruksnavn && !GENERIC_BRUKSNAVN.has(p.bruksnavn.trim())?`<span class="pk">Bruksnavn</span> ${p.bruksnavn}<br>`:''}
     ${p.areal!=null?`<span class="pk">Areal</span> ${fmt(Math.round(p.areal))} m²`:''}
@@ -938,6 +958,10 @@ function detailPopupHTML(p, anchor, siblings){
 function filtered(){
   return DATA.filter(f=>{
     const p=f.properties;
+    // Utenbys parcels (Oslo-owned land in other kommuner) are their own
+    // toggleable layer — independent of the agency + bydel filters, which
+    // only govern the in-Oslo register.
+    if(p.utenbys) return state.showUtenbys;
     if(!active.has(p.eier)) return false;
     if(state.bydel && p.bydel!==state.bydel) return false;
     return true;
@@ -995,7 +1019,7 @@ function renderPinnedTargetOverlay(){
     }
     if (state.showPolygons && f.geometry.type !== 'Point') {
       const m = parseMatrikkel(f.properties.eiendom);
-      const key = m ? `${m.gnr}/${m.bnr}` : ei;
+      const key = m ? `${m.knr}/${m.gnr}/${m.bnr}` : ei;
       if (!polySeen.has(key)) {
         polySeen.add(key);
         L.geoJSON(f, {
@@ -1041,7 +1065,7 @@ function render(){
   const polys = polyFeatures.filter(f => {
     const m = parseMatrikkel(f.properties.eiendom);
     if (!m) return true;
-    const key = `${m.gnr}/${m.bnr}`;
+    const key = `${m.knr}/${m.gnr}/${m.bnr}`;
     if (polySeen.has(key)) return false;
     polySeen.add(key);
     return true;
@@ -1084,7 +1108,7 @@ function render(){
       if (!c) continue;   // road land / address-less → polygon only, no marker
       const p = f.properties;
       const m = parseMatrikkel(p.eiendom);
-      const key = m ? `${m.gnr}/${m.bnr}` : p.eiendom;
+      const key = m ? `${m.knr}/${m.gnr}/${m.bnr}` : p.eiendom;
       if (markerSeen.has(key)) continue;
       markerSeen.add(key);
       markers.push(tag(L.marker([c[1],c[0]],{icon:dot(colorOf(p.eier))}).bindPopup(popup(p,c)), p.eier));
@@ -1148,7 +1172,7 @@ function renderList(){
   const seen = new Set();
   pool = pool.filter(f => {
     const m = parseMatrikkel(f.properties.eiendom);
-    const key = m ? `${m.gnr}/${m.bnr}` : f.properties.eiendom;
+    const key = m ? `${m.knr}/${m.gnr}/${m.bnr}` : f.properties.eiendom;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -1215,7 +1239,7 @@ function renderList(){
     const p = f.properties;
     const c = colorOf(p.eier);
     const title = featureTitle(p);
-    const sub = [_ownerShort(p.eier), p.bydel || '', p.eiendom].filter(Boolean).join(' · ');
+    const sub = [_ownerShort(p.eier), (p.utenbys ? p.kommune : p.bydel) || '', p.eiendom].filter(Boolean).join(' · ');
     const area = p.areal ? fmt(Math.round(p.areal)) + ' m²' : '';
     const activeCls = (p.eiendom === searchTargetEi) ? ' active' : '';
     html += `<div class="list-row${activeCls}" data-eiendom="${p.eiendom}">
@@ -1238,8 +1262,9 @@ function updateStats(rows){
   document.getElementById('fCount').textContent = fmt(rows.length);
   const daa = rows.reduce((s,f)=>s+(f.properties.areal||0),0)/1000;
   document.getElementById('fArea').textContent = fmt(Math.round(daa));
-  // owner bars over the *bydel-filtered* set (independent of owner toggles)
-  const base = DATA.filter(f=>!state.bydel||f.properties.bydel===state.bydel);
+  // owner bars over the *bydel-filtered* set (independent of owner toggles).
+  // Utenbys parcels are excluded — the agency bars describe the Oslo register.
+  const base = DATA.filter(f=>!f.properties.utenbys&&(!state.bydel||f.properties.bydel===state.bydel));
   const counts={}; base.forEach(f=>counts[f.properties.eier]=(counts[f.properties.eier]||0)+1);
   const max = Math.max(1,...Object.values(counts));
   OWNERS.forEach(o=>{
@@ -1299,8 +1324,9 @@ function buildBydel(){
 // "Topp bydeler" ranking panel.
 function renderBydelStats(){
   if(!DATA.length) return;
-  // Inline equivalent of filtered() but without the bydel cut.
-  const base = DATA.filter(f => active.has(f.properties.eier));
+  // Inline equivalent of filtered() but without the bydel cut. Utenbys
+  // parcels have no bydel, so they're excluded from this Oslo-only ranking.
+  const base = DATA.filter(f => !f.properties.utenbys && active.has(f.properties.eier));
   const counts = {};
   for (const f of base) {
     const b = f.properties.bydel;
@@ -1383,6 +1409,31 @@ showPolysCb.checked = state.showPolygons;
 showPolysCb.addEventListener('change', () => {
   state.showPolygons = showPolysCb.checked;
   saveState(); render();
+});
+// Populate the "Eiendommer utenfor Oslo" toggle's count, and hide the whole
+// control when the dataset has no utenbys parcels (sample fallback, or a
+// future source that ships no out-of-kommune sheet).
+function updateUtenbysControl(){
+  const n = DATA.filter(f => f.properties.utenbys).length;
+  const section = document.getElementById('utenbys-section');
+  const ct = document.getElementById('utenbys-count');
+  if (ct) ct.textContent = n ? `(${fmt(n)})` : '';
+  if (section) section.style.display = n ? '' : 'none';
+}
+const showUtbCb = document.getElementById('show-utenbys');
+showUtbCb.checked = state.showUtenbys;
+showUtbCb.addEventListener('change', () => {
+  state.showUtenbys = showUtbCb.checked;
+  saveState(); render();
+  // Bring the out-of-Oslo parcels into view the first time they're enabled
+  // — they're far from the Oslo-centred default, so otherwise nothing
+  // visibly happens.
+  if (state.showUtenbys) {
+    const pts = DATA.filter(f => f.properties.utenbys)
+                    .map(f => { const a = featureAnchor(f); return a ? [a[1], a[0]] : null; })
+                    .filter(Boolean);
+    if (pts.length) map.fitBounds(pts, {padding:[60,60], maxZoom:10});
+  }
 });
 document.getElementById('mode').addEventListener('click',e=>{
   const b=e.target.closest('button'); if(!b) return;
@@ -2362,7 +2413,7 @@ function doDataSearch(q){
   const unique = [];
   for (const f of hits) {
     const m = parseMatrikkel(f.properties.eiendom);
-    const key = m ? `${m.gnr}/${m.bnr}` : f.properties.eiendom;
+    const key = m ? `${m.knr}/${m.gnr}/${m.bnr}` : f.properties.eiendom;
     if (seen.has(key)) continue;
     seen.add(key);
     unique.push(f);
@@ -2557,6 +2608,7 @@ async function boot(){
   }
   applyMetadata(fc.metadata);
   DATA=fc.features;
+  updateUtenbysControl();
   buildBydel();
   // Load pins BEFORE the first render so pinned-target features (the ones
   // that should appear on the map even if the agency filter would hide

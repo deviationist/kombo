@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <!-- KomBo map marker — classic teardrop pin in the brand red (--c-bolig).
+       SVG favicon: crisp at every tab size, scales for retina, no binary. -->
+  <path d="M12 1.5c-3.87 0-7 3.13-7 7 0 4.6 5.32 11.2 6.55 12.66a.6.6 0 0 0 .9 0C13.68 19.7 19 13.1 19 8.5c0-3.87-3.13-7-7-7z"
+        fill="#d4664a" stroke="#a83f28" stroke-width="0.9"/>
+  <circle cx="12" cy="8.5" r="2.6" fill="#fff"/>
+</svg>

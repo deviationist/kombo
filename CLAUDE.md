@@ -12,8 +12,14 @@ rows), Oslobygg KF (formålsbygg, ~795), Boligbygg Oslo KF (utleieboliger,
 ~528), Oslo Havn KF (havn, ~78). Live at **<https://kombo.ichiva.no/>** via
 GitHub Pages.
 
+A second XLSX sheet (`Utenbys eiendommer`, ~160 rows) lists Oslo-owned land
+*outside* Oslo (Oslomarka forest + drinking-water catchment in ~20 neighbouring
+kommuner); these are processed too and surfaced as a toggleable map layer.
+
 This is *only* the kommune's own slice of the cadastre — it cannot answer
-"what's privately owned" without pulling the full Matrikkel register.
+"what's privately owned" without pulling the full Matrikkel register. The
+pipeline is structurally multi-kommune (parcels carry their own KNR); Oslo is
+the currently-configured source via `KOMMUNE` in `source.env`.
 
 ```
 XLSX ──(geocode.py)──> eiendommer.geojson ──(index.html)──> map in browser
@@ -50,12 +56,15 @@ doesn't break the downloader.
 
 ### Two-resolver geocoder (`geocode.py`)
 
-The matrikkelnummer in the `Eiendom` column (`KNR-GNR/BNR/FNR/SNR`, KNR
-always `0301` for Oslo by default) is the join key. The script:
+The matrikkelnummer in the `Eiendom` column (`KNR-GNR/BNR/FNR/SNR`) is the
+join key. KNR is `0301` for the in-Oslo sheet and the host municipality for
+the utenbys sheet, so the pipeline is structurally multi-kommune (Oslo is just
+the configured source via `KOMMUNE` in `source.env`; the resolvers no longer
+hardcode it). The script:
 
-1. Parses every row's matrikkel via `MATRIKKEL_RE`.
-2. **Deduplicates to ~6,636 unique `(gnr, bnr)` pairs** before hitting the
-   network — important because the resolvers are free public APIs.
+1. Parses every row's matrikkel via `MATRIKKEL_RE` (both sheets).
+2. **Deduplicates to ~6,796 unique `(knr, gnr, bnr)` triples** before hitting
+   the network — important because the resolvers are free public APIs.
 3. For each pair, calls **two independent resolvers** (see below). State
    is tracked separately for each via `addr_source` / `geom_source` cache
    columns, so success on one resolver doesn't lock out the other.
@@ -91,15 +100,22 @@ Per-thread politeness sleeps: `SLEEP = 0.05` (Geonorge), `TEIG_SLEEP = 0.125`
 
 `eiendommer.geojson` is a FeatureCollection with:
 
-- `metadata` — `{ vintage, sourceFile, generatedAt, totalRows, located }`
+- `metadata` — `{ vintage, sourceFile, generatedAt, totalRows, located,
+  utenbysRows, utenbysLocated }`. `totalRows`/`located` count the **in-Oslo**
+  sheet only (what the intro copy refers to); `utenbysRows`/`utenbysLocated`
+  the out-of-kommune layer.
 - `features[i].geometry` — Polygon / MultiPolygon (Kartverket) OR Point
   (Geonorge address representation point) as fallback
 - `features[i].properties`:
   - `eiendom` — `0301-10/68/0/0`
   - `adresse` — Geonorge `adressetekst` (street, no postal code)
   - `postnummer` / `poststed` — when Geonorge provided them
-  - `bydel` — Oslo bydel from the XLSX
+  - `bydel` — Oslo bydel from the XLSX (empty for utenbys features)
   - `eier` — owning agency name (one of the four)
+  - `utenbys` — `true` on features from the `Utenbys eiendommer` sheet
+    (Oslo-owned land in another kommune); absent/falsy on in-Oslo features
+  - `kommune` — host municipality name (utenbys features only, e.g. "Asker")
+  - `matrikkelenhetstype` — e.g. "Grunneiendom" (utenbys features only)
   - `bruksnavn` — descriptive name from the XLSX (often "Uregistrert grunn"
     — see `featureTitle` in index.html which skips that as a title)
   - `areal` — `Beregnet areal (m²)`, nullable
@@ -108,10 +124,11 @@ Per-thread politeness sleeps: `SLEEP = 0.05` (Geonorge), `TEIG_SLEEP = 0.125`
     cluster-marker anchor so polygons get both the parcel outline *and* a
     marker at the building's front door
 
-### Cache schema v3 (`geo` table in `geocode_cache.sqlite`)
+### Cache schema v4 (`geo` table in `geocode_cache.sqlite`)
 
 ```sql
 CREATE TABLE geo (
+    knr TEXT,                            -- kommunenummer ('0301' Oslo)
     gnr INTEGER, bnr INTEGER,
     lat REAL, lon REAL,                  -- Geonorge representation point
     adressetekst TEXT,                   -- Geonorge street text
@@ -120,14 +137,17 @@ CREATE TABLE geo (
     addr_source TEXT,                    -- NULL | 'geonorge_adresse' | 'none'
     geom_source TEXT,                    -- NULL | 'kartverket_teig' | 'none'
     postnummer TEXT, poststed TEXT,
-    PRIMARY KEY (gnr, bnr)
+    PRIMARY KEY (knr, gnr, bnr)
 )
 ```
 
-`open_cache` migrates v1 (single `source` field) and v2 (no postnummer)
-caches in place. A row with `addr_source='geonorge_adresse'` AND
-`postnummer IS NULL` triggers a Geonorge re-fetch so old addressed pairs
-pick up the new fields on the next run.
+`open_cache` migrates v1 (single `source` field), v2 (no postnummer), and
+v3 (no `knr`) caches in place. The v3→v4 step adds `knr`, backfills existing
+rows to `'0301'` (a v3 cache is all-Oslo), and rebuilds the table with the
+composite PK so utenbys parcels in other kommuner can't collide with Oslo's
+`(gnr, bnr)` namespace — tested to preserve all rows and be idempotent. A row
+with `addr_source='geonorge_adresse'` AND `postnummer IS NULL` still triggers
+a Geonorge re-fetch so old addressed pairs pick up the postal fields.
 
 ### `index.html` — the map
 
@@ -142,8 +162,10 @@ fetchable, so the page is useful before geocoding finishes.
   are overlays on top — neither resizes the map, so Leaflet's tile grid
   is stable through any UI motion.
 - **Left sidebar** (`#rail`, 340 px) — kommune view: stats, view mode
-  (Punkter / Tetthet / Areal-vekt), per-agency toggles, bydel select + top
-  bydeler ranking, "Vis tomtegrenser" checkbox, distance-mode toggle.
+  (Punkter / Tetthet / Areal-vekt), per-agency toggles, an "Andre lag"
+  section with the "Eiendommer utenfor Oslo" (utenbys) layer toggle, bydel
+  select + top bydeler ranking, "Vis tomtegrenser" checkbox, distance-mode
+  toggle. The utenbys section auto-hides when the dataset has no such rows.
 - **Right sidebar** (`#rail-r`, 300 px) — "Mine punkter": add-pin form
   (address search + "Klikk på kart" mode), distance-mode toggle, pin list.
 - Both rails slide via `transform: translateX(-100% | 100%)`. Tab toggles
@@ -206,7 +228,7 @@ intentionally outside the four-agency palette to avoid confusion.
 
 `localStorage["kombo.v1"]` holds: `bydel`, `mode`, `base`, `active`,
 `center`, `zoom`, `railCollapsed`, `railRCollapsed`, `modeInfoOpen`,
-`showPolygons`, `distanceMode`. UI-only fields stay here.
+`showPolygons`, `showUtenbys`, `distanceMode`. UI-only fields stay here.
 
 `localStorage["kombo.userPins.v1"]` holds the user pin array (separate
 key so user data is independent of UI prefs).
@@ -222,8 +244,10 @@ fallback only kicks in when `active` is absent from storage entirely.
 
 ```
 #z=<int>&lat=<5dp>&lon=<5dp>&v=clusters|heat|heatArea&base=dark|light|sat
- &own=<short codes, comma-separated>&bydel=<urlencoded>&teig=0|1&dm=edge|marker
+ &own=<short codes, comma-separated>&bydel=<urlencoded>&teig=0|1&utb=0|1&dm=edge|marker
 ```
+
+`utb=1` turns on the "Eiendommer utenfor Oslo" (utenbys) layer.
 
 Owner short codes: `eby`, `bygg`, `bolig`, `havn`. Empty `own=` encodes
 the explicit-no-agencies state. `applyUrlHash()` runs after `loadState()`
@@ -289,10 +313,17 @@ workflow's geojson commits also redeploy the site automatically.
   `/get-file/<id>/<hash>/`. `fetch_xlsx.py`'s anchor-text-based link
   finder survives the CMS migration; **do not narrow the href regex** to
   a specific pattern.
-- The XLSX has a second sheet `Utenbys eiendommer` (~150 rows, properties
-  in *other* kommuner — forest land, water sources, etc.) with a different
-  schema. The pipeline currently only processes the first sheet
-  (`Eiendommer i Oslo kommune`); the second is intentionally skipped.
+- The XLSX has a second sheet `Utenbys eiendommer` (~160 rows, Oslo-owned
+  properties in *other* kommuner — Oslomarka forest land + drinking-water
+  catchment, ~157 EBY / 3 Oslobygg) with a different schema (`Kommune`,
+  `Matrikkelenhetstype`, `Tinglyst`, `Eierandel`; no bydel/bruksnavn/areal).
+  **Both sheets are now processed.** Utenbys rows are geocoded against their
+  *own* kommune (per-row KNR) via the Teig WFS — most have no registered
+  address — and emitted as features flagged `utenbys: true` + `kommune`.
+  The map exposes them as a toggleable "Eiendommer utenfor Oslo" layer
+  (`state.showUtenbys`, hash `utb=1`), independent of the agency + bydel
+  filters and excluded from the bydel/area stats. `UTENBYS_SCHEMA` /
+  `OSLO_SCHEMA` in `geocode.py` are the per-sheet column contracts.
 - Pinned-line storage uses **feature identity** (eiendomsstring) not
   coordinates, so a distance-mode flip can re-derive the endpoint without
   losing the pin. Legacy `pin.pinnedClosests` entries are dropped on load.
