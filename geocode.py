@@ -433,6 +433,14 @@ def main():
         has_poly = geom_src == "kartverket_teig" and geom_json
         has_addr = addr_src == "geonorge_adresse" and lat is not None
 
+        # The XLSX `Adresse` column is the canonical per-row text but is
+        # often blank for eierseksjoner (e.g. Casparis gate 4 has 50 flats
+        # listed without an address each). Fall back to the Geonorge
+        # adressetekst on the parcel so the popup + featureTitle have
+        # something other than "Eiendom <gnr>/<bnr>" to show.
+        if not props["adresse"] and _adr:
+            props["adresse"] = _adr
+
         # Carry the full Geonorge-resolved address into every feature when
         # we have one — the popup can format it as "Lilleakerveien 49,
         # 0284 OSLO" without doing a second lookup.
