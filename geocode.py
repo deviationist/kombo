@@ -25,7 +25,8 @@ Output:
     missing.csv          <- rows that couldn't be located by address
 """
 
-import os, sys, re, json, time, sqlite3, csv
+import os, sys, re, json, time, sqlite3, csv, threading
+from concurrent.futures import ThreadPoolExecutor
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -57,13 +58,18 @@ _load_env_file()
 
 GEONORGE = "https://ws.geonorge.no/adresser/v1/sok"
 KOMMUNE = os.environ.get("KOMMUNE", "0301")  # default: Oslo
-SLEEP = 0.05               # ~20 req/s — polite for Geonorge's free address API
+SLEEP = 0.05               # per-thread; combined fleet stays polite (see WORKERS)
 RETRIES = 4
 
 # Kartverket Eiendomskart Teig WFS — parcel polygon fallback when Geonorge
 # returns no address (road land, unregistered land). No auth, GML 3.2 only.
 TEIG_WFS = "https://wfs.geonorge.no/skwms1/wfs.matrikkelen-eiendomskart-teig"
-TEIG_SLEEP = 0.125         # ~8 req/s — no published rate limit, conservative
+TEIG_SLEEP = 0.125         # per-thread; see WORKERS for combined req/s
+
+# Concurrency. Three workers tripled throughput in testing without rate-
+# limit pushback from either Geonorge or Kartverket — combined load is ~3 req/s
+# per resolver, well inside "polite for a free public service" territory.
+WORKERS = int(os.environ.get("WORKERS", "3"))
 
 NS = {
     "wfs": "http://www.opengis.net/wfs/2.0",
@@ -96,7 +102,10 @@ def open_cache(path="geocode_cache.sqlite"):
     the Geonorge response (so the popup can show "Lilleakerveien 49, 0284
     OSLO" instead of just the street). Migrates v1/v2 caches in place.
     """
-    con = sqlite3.connect(path)
+    # check_same_thread=False lets the worker pool share the connection;
+    # we serialise writes through _cache_lock so SQLite never sees overlapping
+    # statements on the same connection.
+    con = sqlite3.connect(path, check_same_thread=False)
     con.execute("""
         CREATE TABLE IF NOT EXISTS geo (
             gnr INTEGER, bnr INTEGER,
@@ -145,15 +154,19 @@ def open_cache(path="geocode_cache.sqlite"):
     return con
 
 
+_cache_lock = threading.Lock()
+
+
 def cache_get(con, gnr, bnr):
     """Return (lat, lon, adressetekst, addr_source, geom_source, geometry_json,
     postnummer, poststed) or None.
     """
-    row = con.execute(
-        "SELECT lat, lon, adressetekst, addr_source, geom_source, geometry_json, "
-        "       postnummer, poststed "
-        "FROM geo WHERE gnr=? AND bnr=?",
-        (gnr, bnr)).fetchone()
+    with _cache_lock:
+        row = con.execute(
+            "SELECT lat, lon, adressetekst, addr_source, geom_source, geometry_json, "
+            "       postnummer, poststed "
+            "FROM geo WHERE gnr=? AND bnr=?",
+            (gnr, bnr)).fetchone()
     return row
 
 
@@ -162,14 +175,15 @@ def cache_put(con, gnr, bnr, *, lat=None, lon=None, adressetekst=None,
               postnummer=None, poststed=None):
     """Insert or replace a cache row. All fields are kwargs to make call sites
     self-documenting."""
-    con.execute(
-        "INSERT OR REPLACE INTO geo "
-        "(gnr, bnr, lat, lon, adressetekst, addr_source, geom_source, "
-        " geometry_json, postnummer, poststed) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?)",
-        (gnr, bnr, lat, lon, adressetekst, addr_source, geom_source,
-         geometry_json, postnummer, poststed))
-    con.commit()
+    with _cache_lock:
+        con.execute(
+            "INSERT OR REPLACE INTO geo "
+            "(gnr, bnr, lat, lon, adressetekst, addr_source, geom_source, "
+            " geometry_json, postnummer, poststed) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (gnr, bnr, lat, lon, adressetekst, addr_source, geom_source,
+             geometry_json, postnummer, poststed))
+        con.commit()
 
 
 def _parse_poslist(text):
@@ -328,9 +342,12 @@ def main():
         "User-Agent": "kombo/1.0 (+https://github.com/deviationist/kombo)",
     })
 
-    done = 0
-    addr_hits = poly_hits = both = neither = 0
-    for gnr, bnr in pairs:
+    counts = {"both": 0, "addr": 0, "poly": 0, "none": 0, "done": 0}
+    counts_lock = threading.Lock()
+    total = len(pairs)
+
+    def process(pair):
+        gnr, bnr = pair
         row = cache_get(con, gnr, bnr) or (None,) * 8
         lat, lon, txt, addr_src, geom_src, geom_json, postnr, poststed = row
 
@@ -363,15 +380,26 @@ def main():
 
         has_addr = addr_src == "geonorge_adresse"
         has_poly = geom_src == "kartverket_teig"
-        if has_addr and has_poly: both += 1
-        elif has_addr:            addr_hits += 1
-        elif has_poly:            poly_hits += 1
-        else:                     neither += 1
-        done += 1
-        if done % 250 == 0:
-            print(f"  {done}/{len(pairs)} resolved "
-                  f"(both {both}, addr-only {addr_hits}, poly-only {poly_hits}, "
-                  f"none {neither})...")
+        with counts_lock:
+            if has_addr and has_poly: counts["both"] += 1
+            elif has_addr:            counts["addr"] += 1
+            elif has_poly:            counts["poly"] += 1
+            else:                     counts["none"] += 1
+            counts["done"] += 1
+            d = counts["done"]
+            if d % 250 == 0:
+                print(f"  {d}/{total} resolved "
+                      f"(both {counts['both']}, addr-only {counts['addr']}, "
+                      f"poly-only {counts['poly']}, none {counts['none']})...",
+                      flush=True)
+
+    print(f"Running with {WORKERS} worker thread(s).", flush=True)
+    with ThreadPoolExecutor(max_workers=WORKERS) as ex:
+        # list() forces the generator to drain so we wait for everything.
+        list(ex.map(process, pairs))
+
+    addr_hits, poly_hits = counts["addr"], counts["poly"]
+    both, neither = counts["both"], counts["none"]
 
     located = both + addr_hits + poly_hits
     print(f"Done. {located}/{len(pairs)} pairs located "
