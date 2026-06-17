@@ -1831,18 +1831,32 @@ document.addEventListener('click', e => {
   if (!el || el.hasAttribute('disabled')) return;
   jumpToFeature(el.dataset.eiendom, el.dataset.mode || 'auto');
 });
-// Keyboard ← / → step through siblings while a popup with the nav strip
-// is open. Doesn't fire while the user is typing into a text field.
+// Keyboard nav within an open kommune popup: ← / → step through siblings,
+// Esc returns to the list overview. Doesn't fire while typing.
+// Bound in the capture phase so we beat Leaflet's own Esc-closes-popup.
 document.addEventListener('keydown', e => {
-  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
   const tag = e.target.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target.isContentEditable) return;
   const popupEl = map._popup && map._popup.getElement();
   if (!popupEl) return;
-  const dir = e.key === 'ArrowLeft' ? 'prev' : 'next';
-  const btn = popupEl.querySelector(`.nav-btn[data-dir="${dir}"][data-eiendom]:not([disabled])`);
-  if (btn) { e.preventDefault(); jumpToFeature(btn.dataset.eiendom, btn.dataset.mode || 'auto'); }
-});
+
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+    const dir = e.key === 'ArrowLeft' ? 'prev' : 'next';
+    const btn = popupEl.querySelector(`.nav-btn[data-dir="${dir}"][data-eiendom]:not([disabled])`);
+    if (btn) { e.preventDefault(); jumpToFeature(btn.dataset.eiendom, btn.dataset.mode || 'auto'); }
+    return;
+  }
+  if (e.key === 'Escape') {
+    // Esc in detail view → go back to list. Esc anywhere else → let Leaflet
+    // close the popup (its own keydown handler).
+    const backBtn = popupEl.querySelector('.popup-nav .nav-btn[data-mode="list"][data-eiendom]');
+    if (backBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      jumpToFeature(backBtn.dataset.eiendom, 'list');
+    }
+  }
+}, true);
 
 // Right-click context menu on the map → "Legg til markør her" → prompt for
 // an optional name → addPin at the click point + run enrichPin.
