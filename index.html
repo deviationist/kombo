@@ -478,27 +478,6 @@
       <h1>Liste og pins</h1>
     </header>
     <div class="scroll">
-      <details class="rsect" id="rsect-list" open>
-        <summary>Listevisning <span class="ct" id="list-count">0</span></summary>
-        <div class="rsect-body">
-          <p class="hint">Eiendommene som vises på kartet akkurat nå.</p>
-          <div class="list-controls">
-            <label class="cbx">
-              <input type="checkbox" id="list-bbox-only">
-              <span>Kun synlige</span>
-            </label>
-            <select id="list-sort" title="Sorter listen">
-              <option value="addr">Adresse</option>
-              <option value="eier">Eier</option>
-              <option value="bydel">Bydel</option>
-              <option value="matrikkel">Matrikkel</option>
-              <option value="areal">Areal</option>
-            </select>
-          </div>
-          <div id="list-rows"></div>
-        </div>
-      </details>
-
       <details class="rsect" id="rsect-pins" open>
         <summary>Mine punkter <span class="ct" id="pin-section-count">0</span></summary>
         <div class="rsect-body">
@@ -526,6 +505,27 @@
             <div class="label">Punkter (<span id="pin-count">0</span>)</div>
             <div id="pin-list"></div>
           </section>
+        </div>
+      </details>
+
+      <details class="rsect" id="rsect-list" open>
+        <summary>Listevisning <span class="ct" id="list-count">0</span></summary>
+        <div class="rsect-body">
+          <p class="hint">Eiendommene som vises på kartet akkurat nå.</p>
+          <div class="list-controls">
+            <label class="cbx">
+              <input type="checkbox" id="list-bbox-only">
+              <span>Kun synlige</span>
+            </label>
+            <select id="list-sort" title="Sorter listen">
+              <option value="addr">Adresse</option>
+              <option value="eier">Eier</option>
+              <option value="bydel">Bydel</option>
+              <option value="matrikkel">Matrikkel</option>
+              <option value="areal">Areal</option>
+            </select>
+          </div>
+          <div id="list-rows"></div>
         </div>
       </details>
     </div>
