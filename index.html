@@ -353,13 +353,18 @@ function dot(color){
       box-shadow:0 0 0 1px var(--inner-ring), 0 1px 4px var(--halo-glow)"></div>`});
 }
 const fmt = n => n.toLocaleString('nb-NO');
-// First vertex of a polygon ring — good-enough anchor for a Street View link
-// and the heat-layer weight position.
+// First vertex of a polygon ring — good-enough fallback anchor when there's
+// no precomputed centre to use.
 function geomAnchor(g){
   if (g.type === 'Point') return g.coordinates;             // [lon, lat]
   if (g.type === 'Polygon') return g.coordinates[0][0];
   if (g.type === 'MultiPolygon') return g.coordinates[0][0][0];
   return null;
+}
+// Preferred anchor: the Geonorge address point (semantically "front door")
+// when geocode.py captured one, else the geometry's anchor as fallback.
+function featureAnchor(f){
+  return (f.properties && f.properties.center) || geomAnchor(f.geometry);
 }
 function popup(p, anchor){
   const sv = anchor
@@ -407,26 +412,39 @@ function render(){
         return {color:c, weight:1.6, fillColor:c, fillOpacity:0.32, opacity:0.95};
       },
       onEachFeature: (f, layer) => {
-        layer.bindPopup(popup(f.properties, geomAnchor(f.geometry)));
+        layer.bindPopup(popup(f.properties, featureAnchor(f)));
       }
     }).addTo(map);
   }
 
   if(state.mode==='clusters'){
-    const markers = points.map(f=>{
-      const p=f.properties, c=f.geometry.coordinates;
-      return L.marker([c[1],c[0]],{icon:dot(colorOf(p.eier))}).bindPopup(popup(p,c));
-    });
+    const markers = [];
+    // Pure-point features → marker at the point.
+    for (const f of points) {
+      const p = f.properties, c = f.geometry.coordinates;
+      markers.push(L.marker([c[1],c[0]],{icon:dot(colorOf(p.eier))}).bindPopup(popup(p,c)));
+    }
+    // Polygon features WITH a Geonorge address point → marker at the address
+    // on top of the polygon outline. Lets addressed parcels (Boligbygg houses,
+    // Oslobygg schools, …) cluster + carry a popup while the polygon shows
+    // the actual parcel shape underneath.
+    for (const f of polys) {
+      const c = f.properties && f.properties.center;
+      if (!c) continue;   // road land / address-less → polygon only, no marker
+      const p = f.properties;
+      markers.push(L.marker([c[1],c[0]],{icon:dot(colorOf(p.eier))}).bindPopup(popup(p,c)));
+    }
     clusterLayer.addLayers(markers);
     if(!map.hasLayer(clusterLayer)) map.addLayer(clusterLayer);
   }else{
     if(map.hasLayer(clusterLayer)) map.removeLayer(clusterLayer);
     const areaWeight = state.mode==='heatArea';
     const maxA = areaWeight ? Math.max(1,...rows.map(f=>f.properties.areal||0)) : 1;
-    // Use geomAnchor so polygons contribute to the heat layer too (anchored
-    // at their first vertex — fine for a density view).
+    // featureAnchor prefers the Geonorge address point when available, so
+    // polygons with an address contribute heat at the building's front door
+    // rather than at an arbitrary first-vertex of the parcel boundary.
     const pts = rows.map(f=>{
-      const a = geomAnchor(f.geometry); // [lon, lat]
+      const a = featureAnchor(f); // [lon, lat]
       const w = areaWeight ? Math.min(1, Math.sqrt((f.properties.areal||0)/maxA)) : .6;
       return [a[1],a[0],w];
     });
@@ -483,8 +501,9 @@ function buildBydel(){
   sel.onchange=()=>{
     state.bydel=sel.value; saveState(); render();
     if(state.bydel){
-      // Use geomAnchor so polygon features also count toward the fitBounds.
-      const pts=filtered().map(f=>{ const a=geomAnchor(f.geometry); return [a[1],a[0]]; });
+      // Use featureAnchor so polygon features also count toward the
+      // fitBounds, anchored at the Geonorge address point when available.
+      const pts=filtered().map(f=>{ const a=featureAnchor(f); return [a[1],a[0]]; });
       if(pts.length) map.fitBounds(pts,{padding:[40,40]});
     }
   };
