@@ -146,7 +146,15 @@
     box-shadow:-2px 0 12px rgba(211,72,160,.55), 0 0 0 1px rgba(255,255,255,.18)
   }
   .rail-r-collapsed #rail-r-toggle:hover{background:#dd5fb1;color:var(--ground)}
-  header{padding:20px 20px 14px;border-bottom:1px solid var(--line)}
+  header{padding:20px 20px 14px;border-bottom:1px solid var(--line);position:relative}
+  /* In-rail × close buttons — small + low-contrast, similar to seg-btn. */
+  .rail-close{position:absolute;top:14px;width:20px;height:20px;border-radius:5px;
+    background:var(--panel-2);border:1px solid var(--line);color:var(--muted);
+    cursor:pointer;font:600 12px/1 Inter;display:flex;align-items:center;justify-content:center;
+    transition:background .12s,border-color .12s,color .12s;z-index:2}
+  .rail-close:hover{background:var(--panel);border-color:var(--muted);color:var(--ink)}
+  #rail-close,
+  #rail-r-close{right:14px}
   header .eyebrow{font:600 11px/1 Inter;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
   header h1{margin:6px 0 0;font:600 26px/1.05 'Barlow Condensed',sans-serif;letter-spacing:.01em}
   header p{margin:8px 0 0;font-size:12.5px;color:var(--muted);line-height:1.45}
@@ -234,9 +242,11 @@
     border-top:1px solid var(--line);font-size:11.5px;line-height:1.4}
   /* Scrollable proximity list — keeps the popup compact when there are
      many candidates. */
-  .pin-pop .prox-list{max-height:260px;overflow-y:auto;margin:0 -6px;padding:0 6px}
+  .pin-pop .prox-list{max-height:280px;overflow-y:auto;margin:0 -6px;padding:0 6px}
   .pin-pop .prox-list::-webkit-scrollbar{width:6px}
   .pin-pop .prox-list::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px}
+  .pin-pop .prox-hdr{margin-top:6px;margin-bottom:1px}
+  .pin-pop .prox-hdr:first-child{margin-top:0}
   /* Distance label that sits at the centre of each pinned comparison line. */
   .leaflet-tooltip.pin-line-label{
     background:var(--c-pin);color:#ffffff;
@@ -292,6 +302,7 @@
 <body>
 <div id="app">
   <aside id="rail">
+    <button class="rail-close" id="rail-close" type="button" title="Lukk sidepanelet" aria-label="Lukk sidepanelet">×</button>
     <header>
       <div class="eyebrow" id="eyebrow">Oslo kommune · eiendomsmatrikkel</div>
       <h1>Hvor eier kommunen?</h1>
@@ -350,6 +361,7 @@
   <button id="rail-toggle" type="button" title="Skjul/vis sidepanelet" aria-label="Skjul/vis sidepanelet">‹</button>
 
   <aside id="rail-r">
+    <button class="rail-close" id="rail-r-close" type="button" title="Lukk høyre panel" aria-label="Lukk høyre panel">×</button>
     <header>
       <div class="eyebrow">Mine punkter</div>
       <h1>Sammenligning</h1>
@@ -792,6 +804,11 @@ railToggle.addEventListener('click', () => {
   // No invalidateSize needed — the map container is fixed-size; only the
   // overlay rail moves. That's the whole point of this layout.
 });
+document.getElementById('rail-close').addEventListener('click', () => {
+  state.railCollapsed = true;
+  applyRailState();
+  saveState();
+});
 
 // Mode button copy & inline descriptions (shown under the segment so the
 // difference between Tetthet and Areal-vekt is discoverable without hovering).
@@ -842,6 +859,11 @@ railRToggle.addEventListener('click', () => {
   applyRailRState();
   saveState();
 });
+document.getElementById('rail-r-close').addEventListener('click', () => {
+  state.railRCollapsed = true;
+  applyRailRState();
+  saveState();
+});
 
 // Persisted user pins. Separate key from the rest of the UI state since
 // they're domain data, not UI preferences.
@@ -867,28 +889,31 @@ function userPinIcon(){
       box-shadow:0 0 0 2px var(--halo), 0 2px 6px var(--halo-glow)"></div>`});
 }
 
-// Outside-ranked features for a given pin — the same set used by both the
-// popup's "nearest" list AND the pinned-line renderer, so lines can only
-// exist for features the user can see in the list.
-//   * Distance cut-off at 150 m — anything farther isn't really "nearby".
-//   * Buildings (Oslobygg / Boligbygg / Havn) preferred over EBY tomter,
-//     fall back to all only if the building filter would be empty.
-//   * Hard ceiling of 25 entries as a sanity backstop.
+// Outside-ranked features for a given pin — split into two sections so the
+// EBY tomter/veiareal (which surround every building and would otherwise
+// flood the list) don't crowd out the actual buildings, but still remain
+// pickable for users who want to measure to them.
+//   * 150 m hard distance cut-off
+//   * "Bygg"   = Oslobygg / Boligbygg / Havn  — capped at 15 entries
+//   * "Tomter" = Eiendoms- og byfornyelsesetaten — capped at 10 entries
 const MAX_PROXIMITY_M = 150;
+const isBuildingEier = e => e !== 'Eiendoms- og byfornyelsesetaten';
 function outsideRanked(pin){
   const all = DATA.map(f => {
     const r = featureClosestForMode(pin, f);
     return r ? { ...r, f } : null;
   }).filter(Boolean);
-  const isBuildingEier = e => e !== 'Eiendoms- og byfornyelsesetaten';
   const within = all
     .filter(x => !x.inside && x.dist <= MAX_PROXIMITY_M)
     .sort((a,b) => a.dist - b.dist);
-  const withinBuildings = within.filter(x => isBuildingEier(x.f.properties.eier));
-  return (withinBuildings.length ? withinBuildings : within).slice(0, 25);
+  return {
+    buildings: within.filter(x => isBuildingEier(x.f.properties.eier)).slice(0, 15),
+    tomter:    within.filter(x => !isBuildingEier(x.f.properties.eier)).slice(0, 10),
+  };
 }
 function visibleOutsideEi(pin){
-  return new Set(outsideRanked(pin).map(x => x.f.properties.eiendom));
+  const r = outsideRanked(pin);
+  return new Set([...r.buildings, ...r.tomter].map(x => x.f.properties.eiendom));
 }
 
 function pinPopupHTML(pin){
@@ -901,7 +926,7 @@ function pinPopupHTML(pin){
     return r ? { ...r, f } : null;
   }).filter(Boolean);
   const inside  = all.filter(x => x.inside).slice(0, 5);
-  const outside = outsideRanked(pin);
+  const { buildings, tomter } = outsideRanked(pin);
 
   const insideRows = inside.map(({f}) => {
     const p = f.properties;
@@ -915,7 +940,7 @@ function pinPopupHTML(pin){
     </div>`;
   }).join('');
 
-  const proxRows = outside.map(({dist, f}) => {
+  const rowHtml = ({dist, f}) => {
     const p = f.properties;
     const c = colorOf(p.eier);
     const distLbl = dist < 1000 ? `${Math.round(dist)} m` : `${(dist/1000).toFixed(1)} km`;
@@ -928,7 +953,9 @@ function pinPopupHTML(pin){
       <span class="pk" style="font-variant-numeric:tabular-nums">${distLbl}</span>
       <span class="x" aria-hidden="true">×</span>
     </div>`;
-  }).join('');
+  };
+  const buildingRows = buildings.map(rowHtml).join('');
+  const tomterRows   = tomter.map(rowHtml).join('');
 
   const head = pin.label
     ? `<b>${pin.label}</b><br><span class="pk">${pin.lat.toFixed(5)}, ${pin.lon.toFixed(5)}</span>`
@@ -946,10 +973,14 @@ function pinPopupHTML(pin){
         <div class="pk" style="margin-bottom:2px">Du står innenfor:</div>
         ${insideRows}
       </div>` : ''}
-    <div style="margin-top:8px;font-size:11.5px;line-height:1.4">
-      <div class="pk" style="margin-bottom:2px">Nærmeste kommunale tomter (innen 150 m):</div>
-      <div class="prox-list">${proxRows || '<span class="pk">Ingen kommunale tomter innen 150 m.</span>'}</div>
-    </div>
+    ${(buildingRows || tomterRows) ? `
+      <div class="prox-list" style="margin-top:8px;font-size:11.5px;line-height:1.4">
+        ${buildingRows ? `<div class="pk prox-hdr">Bygg innen 150 m:</div>${buildingRows}` : ''}
+        ${tomterRows   ? `<div class="pk prox-hdr">Tomter / veiareal innen 150 m:</div>${tomterRows}` : ''}
+      </div>` : `
+      <div style="margin-top:8px;font-size:11.5px;line-height:1.4">
+        <span class="pk">Ingen kommunale eiendommer innen 150 m.</span>
+      </div>`}
     <button class="pop-del" data-id="${pin.id}">Slett punkt</button>
   </div>`;
 }
@@ -1645,10 +1676,10 @@ async function boot(){
   applyMetadata(fc.metadata);
   DATA=fc.features;
   buildBydel();
-  render();
-  // User pins survive reload. Render them after DATA is loaded so the
-  // proximity popup has features to rank against. Also restore any
-  // previously pinned comparison lines + the Teig polygon per pin.
+  // Load pins BEFORE the first render so pinned-target features (the ones
+  // that should appear on the map even if the agency filter would hide
+  // them) make it into render's mapRows on the very first pass — instead
+  // of only after the user toggles something.
   loadPins();
   // Migration: older pins stored pinnedClosests (lon,lat). The new shape is
   // pinnedFeatures (eiendomsstring). Drop the legacy field — re-pinning is
@@ -1672,6 +1703,7 @@ async function boot(){
     });
   });
   renderPinList();
+  render();
 }
 boot();
 </script>
