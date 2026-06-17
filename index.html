@@ -695,6 +695,38 @@ function loadState(){
     }
   }catch(e){ /* corrupt JSON / unavailable storage — ignore */ }
 }
+// ----------------------------------------------------------------------------
+// Analytics — thin wrapper over Plausible custom events (snippet in <head>).
+// The stub there makes window.plausible queue calls before the script loads,
+// so track() is always safe to call. We instrument *intent* — settled choices
+// and engaged actions — not every transient click: discrete choices fire once
+// per real change (trackChanged dedupes), and bursty toggles collapse to their
+// final value (trackDebounced). Plausible prop values must be strings/numbers.
+// ----------------------------------------------------------------------------
+function track(name, props){
+  try{ window.plausible && window.plausible(name, props ? {props} : undefined); }
+  catch(e){ /* analytics must never break the app */ }
+}
+const _trackTimers = {};
+function trackDebounced(key, name, props, wait){
+  clearTimeout(_trackTimers[key]);
+  _trackTimers[key] = setTimeout(() => track(name, props), wait || 600);
+}
+const _trackLast = {};
+function trackChanged(key, name, value, props){
+  if (_trackLast[key] === value) return;   // ignore no-op re-selects of the same value
+  _trackLast[key] = value;
+  track(name, props);
+}
+// Outbound: drilling from a popup into the official register. Capture-phase +
+// delegated so it fires regardless of which popup the link lives in.
+document.addEventListener('click', e => {
+  const a = e.target.closest && e.target.closest('a[href*="eiendomsregisteret.kartverket.no"]');
+  if (!a) return;
+  const m = (a.getAttribute('href') || '').match(/eiendom\/([\d/]+)/);
+  track('Grunnboken åpnet', m ? { eiendom: m[1] } : undefined);
+}, true);
+
 function saveState(){
   try{
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
@@ -829,6 +861,7 @@ L.control.layers({'Mørk': darkLayer, 'Lys': lightLayer, 'Satellitt': satLayer},
 map.on('baselayerchange', e => {
   state.base = ({'Mørk':'dark','Lys':'light','Satellitt':'sat'})[e.name] || 'dark';
   saveState();
+  trackChanged('base', 'Kartlag endret', state.base, { kart: e.name });
 });
 
 let clusterLayer = L.markerClusterGroup({
@@ -1373,6 +1406,11 @@ function buildOwners(){
       // (see outsideRanked). render() pulls in any pinned-target features
       // whose agency is currently hidden.
       render();
+      // Debounced: report the settled selection after a burst of toggles.
+      trackDebounced('filter-etat', 'Etatsfilter endret', {
+        valgt: [...active].map(k => OWNER_CODE[k] || k).sort().join(',') || '(ingen)',
+        antall: active.size,
+      });
     };
     wrap.appendChild(div);
   });
@@ -1385,6 +1423,7 @@ function buildBydel(){
   if(state.bydel && set.includes(state.bydel)) sel.value = state.bydel;  // restore
   sel.onchange=()=>{
     state.bydel=sel.value; saveState(); render();
+    trackChanged('bydel', 'Bydel valgt', state.bydel, { bydel: state.bydel || '(alle)' });
     if(state.bydel){
       // Use featureAnchor so polygon features also count toward the
       // fitBounds, anchored at the Geonorge address point when available.
@@ -1485,6 +1524,7 @@ showPolysCb.checked = state.showPolygons;
 showPolysCb.addEventListener('change', () => {
   state.showPolygons = showPolysCb.checked;
   saveState(); render();
+  trackDebounced('lag-teig', 'Lag endret', { lag: 'tomtegrenser', tilstand: showPolysCb.checked ? 'på' : 'av' });
 });
 // Populate the per-layer counts in the "Lag" section, and hide just the
 // utenbys row when the dataset has no out-of-kommune parcels (sample
@@ -1505,12 +1545,14 @@ showOsloCb.checked = state.showOslo;
 showOsloCb.addEventListener('change', () => {
   state.showOslo = showOsloCb.checked;
   saveState(); render();
+  trackDebounced('lag-oslo', 'Lag endret', { lag: 'oslo', tilstand: showOsloCb.checked ? 'på' : 'av' });
 });
 const showUtbCb = document.getElementById('show-utenbys');
 showUtbCb.checked = state.showUtenbys;
 showUtbCb.addEventListener('change', () => {
   state.showUtenbys = showUtbCb.checked;
   saveState(); render();
+  trackDebounced('lag-utb', 'Lag endret', { lag: 'utenfor-oslo', tilstand: showUtbCb.checked ? 'på' : 'av' });
   // Bring the out-of-Oslo parcels into view the first time they're enabled
   // — they're far from the Oslo-centred default, so otherwise nothing
   // visibly happens.
@@ -1524,6 +1566,7 @@ showUtbCb.addEventListener('change', () => {
 document.getElementById('mode').addEventListener('click',e=>{
   const b=e.target.closest('button'); if(!b) return;
   state.mode=b.dataset.m; applyModeUi(); saveState(); render();
+  trackChanged('mode', 'Visning endret', state.mode, { modus: state.mode });
 });
 
 // ============================================================================
@@ -1849,6 +1892,7 @@ function togglePinnedLine(pin, feature){
   // Re-render the map so pinned-target features appear (or disappear) on
   // top of the agency-filter result.
   render();
+  if (!isPinned) track('Punkt sammenlignet', { etat: OWNER_CODE[feature.properties.eier] || 'annet' });
   return !isPinned;
 }
 function clearPinLines(pinId){
@@ -1966,7 +2010,7 @@ function renderPinList(){
     </div>`).join('');
 }
 
-function addPin({lat, lon, label, matrikkel}){
+function addPin({lat, lon, label, matrikkel, via}){
   const pin = {
     id: 'p-' + Date.now().toString(36) + '-' + Math.floor(Math.random()*1e4).toString(36),
     lat, lon,
@@ -1978,6 +2022,7 @@ function addPin({lat, lon, label, matrikkel}){
   savePins();
   renderPinMarker(pin);
   renderPinList();
+  track('Punkt lagt til', { via: via || 'ukjent' });
   // Kick off the async enrichment — reverse-geocode for address+matrikkel
   // if missing, then fetch the Kartverket Teig polygon for that matrikkel.
   enrichPin(pin);
@@ -2270,7 +2315,7 @@ function setPinClickMode(on){
 pinClickBtn.addEventListener('click', () => setPinClickMode(!pinClickMode));
 map.on('click', e => {
   if (!pinClickMode) return;
-  const pin = addPin({lat: e.latlng.lat, lon: e.latlng.lng, label: null});
+  const pin = addPin({lat: e.latlng.lat, lon: e.latlng.lng, label: null, via: 'kart-klikk'});
   setPinClickMode(false);
   setTimeout(() => pinMarkers.get(pin.id)?.openPopup(), 50);
 });
@@ -2326,7 +2371,7 @@ async function doSearch(q){
           gnr: a.gardsnummer,
           bnr: a.bruksnummer,
         };
-        const pin = addPin({lat: rp.lat, lon: rp.lon, label, matrikkel});
+        const pin = addPin({lat: rp.lat, lon: rp.lon, label, matrikkel, via: 'søk'});
         map.flyTo([rp.lat, rp.lon], Math.max(map.getZoom(), 16), {duration:0.6});
         setTimeout(() => pinMarkers.get(pin.id)?.openPopup(), 700);
         searchInput.value = '';
@@ -2641,7 +2686,7 @@ ctxMenu.querySelector('[data-action="add-here"]').addEventListener('click', () =
   if (!ll) return;
   const name = window.prompt('Navn på punkt (la stå tom for adresse):', '');
   const trimmed = (name || '').trim();
-  addPin({ lat: ll.lat, lon: ll.lng, label: trimmed || null });
+  addPin({ lat: ll.lat, lon: ll.lng, label: trimmed || null, via: 'høyreklikk' });
 });
 
 // ---- sample fallback so the map renders before geocode.py is run ----
@@ -2751,7 +2796,7 @@ async function boot(){
       // user might re-open their own share link.
       const exists = userPins.find(pp =>
         Math.abs(pp.lat - lat) < 1e-4 && Math.abs(pp.lon - lon) < 1e-4);
-      const target = exists || (addPin({lat, lon, label: null}), userPins[userPins.length - 1]);
+      const target = exists || (addPin({lat, lon, label: null, via: 'delt-lenke'}), userPins[userPins.length - 1]);
       setTimeout(() => pinMarkers.get(target.id)?.openPopup(), 500);
     }
   }
