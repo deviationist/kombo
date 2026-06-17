@@ -253,6 +253,19 @@
   .pin-pop .prox-list::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px}
   .pin-pop .prox-hdr{margin-top:6px;margin-bottom:1px}
   .pin-pop .prox-hdr:first-child{margin-top:0}
+  /* "Andre enheter på samme adresse" — small co-located-unit list inside the
+     kommune popup. Each row is clickable to swap the popup to that sibling. */
+  .popup-sibs{margin-top:8px;font-size:11.5px;line-height:1.35}
+  .popup-sibs-list{max-height:150px;overflow-y:auto;margin:0 -6px;padding:0 6px}
+  .popup-sibs-list::-webkit-scrollbar{width:6px}
+  .popup-sibs-list::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px}
+  .sib-row{display:flex;gap:6px;align-items:center;padding:3px 6px;margin:0 -6px;
+    border-top:1px solid var(--line);border-radius:3px;cursor:pointer;
+    transition:background .08s}
+  .sib-row:hover{background:var(--panel)}
+  .sib-row .dot{width:8px;height:8px;border-radius:50%;flex:none}
+  .sib-row .ttl{flex:1;color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .sib-row .pk{font-size:10px;font-variant-numeric:tabular-nums}
   /* Distance label that sits at the centre of each pinned comparison line. */
   .leaflet-tooltip.pin-line-label{
     background:var(--c-pin);color:#ffffff;
@@ -331,9 +344,12 @@
           <button class="info-btn" id="mode-info" type="button" aria-label="Forklar visningsmodi" title="Forklar visningsmodi">?</button>
         </div>
         <div class="seg" id="mode">
-          <button data-m="clusters" class="on" title="Hver eiendom som egen markør — gruppert i klynger når man zoomer ut.">Punkter</button>
-          <button data-m="heat"               title="Varmekart der hver eiendom teller likt — viser hvor det er flest eiendommer per område.">Tetthet</button>
-          <button data-m="heatArea"           title="Varmekart vektet på areal — store eiendommer lyser sterkere. Viser hvor kommunen dominerer arealmessig.">Areal-vekt</button>
+          <!-- No baked-in `class="on"` — applyModeUi() sets the active button from
+               state after loadState() / applyUrlHash() resolve. Avoids a single-
+               frame flash of Punkter-active when the actual state is heat/heatArea. -->
+          <button data-m="clusters" title="Hver eiendom som egen markør — gruppert i klynger når man zoomer ut.">Punkter</button>
+          <button data-m="heat"     title="Varmekart der hver eiendom teller likt — viser hvor det er flest eiendommer per område.">Tetthet</button>
+          <button data-m="heatArea" title="Varmekart vektet på areal — store eiendommer lyser sterkere. Viser hvor kommunen dominerer arealmessig.">Areal-vekt</button>
         </div>
         <div class="mode-desc" id="mode-desc"></div>
         <label class="toggle-row" title="Vis omrissene av tomtene fra Kartverkets Eiendomskart-Teig WFS.">
@@ -645,6 +661,15 @@ function featureTitle(p){
 }
 
 function popup(p, anchor){
+  // Two flavours of Google link. The address-based search URL is much more
+  // accurate when we have the kommune-registered address (Google resolves
+  // the place directly, and Street View is one pegman click away). The
+  // pano URL targets the nearest existing panorama to the lat/lon, which
+  // sometimes lands across the street or on a neighbouring building.
+  const addr = (p.adresse || '').trim();
+  const gmapsAddr = addr
+    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${addr}${p.postnummer ? `, ${p.postnummer}` : ''}${p.poststed ? ' ' + p.poststed : ''}`)}`
+    : null;
   const sv = anchor
     ? `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${anchor[1]},${anchor[0]}`
     : null;
@@ -653,6 +678,30 @@ function popup(p, anchor){
   // "0284 OSLO" line under the street address — only when Geonorge gave us
   // both fields. Falls back silently for parcels with no registered address.
   const post = (p.postnummer && p.poststed) ? `${p.postnummer} ${p.poststed}` : '';
+  // Other rows sharing this exact address — eierseksjoner of a building or
+  // co-located parcels. We pre-render the list inside the popup so users
+  // discover them without having to spider-fy clusters or scan the XLSX.
+  // Limit + scroll if there are many.
+  const siblings = (DATA && p.adresse)
+    ? DATA.filter(f => f.properties.eiendom !== p.eiendom
+                   && f.properties.adresse === p.adresse).slice(0, 50)
+    : [];
+  const siblingHtml = siblings.length ? `
+    <div class="popup-sibs">
+      <div class="pk" style="margin-bottom:2px">${siblings.length} andre på samme adresse:</div>
+      <div class="popup-sibs-list">
+        ${siblings.map(s => {
+          const sp = s.properties;
+          const sc = colorOf(sp.eier);
+          const t = featureTitle(sp);
+          return `<div class="sib-row" data-eiendom="${sp.eiendom}" title="Klikk for å vise denne enheten">
+            <span class="dot" style="background:${sc}"></span>
+            <span class="ttl">${sp.eiendom.replace(/^\d+-/, '')}${sp.bruksnavn && !GENERIC_BRUKSNAVN.has(sp.bruksnavn.trim())?` · ${sp.bruksnavn}`:''}</span>
+            <span class="pk">${sp.eier.split(' ')[0]}</span>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>` : '';
   return `<b>${featureTitle(p)}</b>
     ${post ? `<div class="pk" style="margin-top:2px">${post}</div>` : '<br>'}
     <span class="pk">Matrikkel</span> ${p.eiendom}<br>
@@ -661,10 +710,13 @@ function popup(p, anchor){
     ${p.bruksnavn && !GENERIC_BRUKSNAVN.has(p.bruksnavn.trim())?`<span class="pk">Bruksnavn</span> ${p.bruksnavn}<br>`:''}
     ${p.areal!=null?`<span class="pk">Areal</span> ${fmt(Math.round(p.areal))} m²`:''}
     <div style="margin-top:6px">
+      ${gmapsAddr?`<a class="sv-link" href="${gmapsAddr}" target="_blank" rel="noopener">Google Maps ↗</a>`:''}
+      ${gmapsAddr && sv?' · ':''}
       ${sv?`<a class="sv-link" href="${sv}" target="_blank" rel="noopener">Street View ↗</a>`:''}
-      ${sv && gb?' · ':''}
+      ${(gmapsAddr||sv) && gb?' · ':''}
       ${gb?`<a class="sv-link" href="${gb}" target="_blank" rel="noopener">Grunnboken ↗</a>`:''}
-    </div>`;
+    </div>
+    ${siblingHtml}`;
 }
 
 function filtered(){
@@ -734,14 +786,15 @@ function render(){
   if(polyLayer){ map.removeLayer(polyLayer); polyLayer=null; }
 
   const points = mapRows.filter(f=>f.geometry.type==='Point');
-  // Dedupe polygons by (gnr, bnr) — eierseksjoner (individual flats) share
-  // their building's parcel, so without this the same polygon stacks 50×
-  // and adds up to fully opaque, hiding the outline + the basemap below.
-  // Markers are NOT deduped; the cluster bubble counts every row, and
-  // spider-fying still gives a popup per flat.
+  // ALL polygon-shaped features — used for cluster markers + heat layer so
+  // every row (including all the eierseksjoner sharing a parcel) gets its
+  // own marker / heat contribution.
+  const polyFeatures = mapRows.filter(f=>f.geometry.type!=='Point');
+  // Deduped subset for the polygon OUTLINE rendering — eierseksjoner share
+  // their building's parcel, so without this the same Teig stacks N× and
+  // adds up to fully opaque, hiding the outline + basemap below.
   const polySeen = new Set();
-  const polys = mapRows.filter(f => {
-    if (f.geometry.type === 'Point') return false;
+  const polys = polyFeatures.filter(f => {
     const m = parseMatrikkel(f.properties.eiendom);
     if (!m) return true;
     const key = `${m.gnr}/${m.bnr}`;
@@ -778,8 +831,10 @@ function render(){
     // Polygon features WITH a Geonorge address point → marker at the address
     // on top of the polygon outline. Lets addressed parcels (Boligbygg houses,
     // Oslobygg schools, …) cluster + carry a popup while the polygon shows
-    // the actual parcel shape underneath.
-    for (const f of polys) {
+    // the actual parcel shape underneath. Use polyFeatures (un-deduped) so
+    // every eierseksjon gets its own marker — the cluster bubble counts
+    // them all, and spider-fy still gives a popup per flat.
+    for (const f of polyFeatures) {
       const c = f.properties && f.properties.center;
       if (!c) continue;   // road land / address-less → polygon only, no marker
       const p = f.properties;
@@ -1685,6 +1740,23 @@ async function doSearch(q){
 // Dismiss suggestion list when clicking elsewhere.
 document.addEventListener('click', e => {
   if (!e.target.closest('#pin-form')) searchSuggest.classList.remove('open');
+});
+
+// Delegated handler for the "Andre enheter på samme adresse" sibling rows
+// inside any open kommune popup. Clicking a row re-opens the popup with
+// the sibling's content (same screen position — siblings share an address).
+document.addEventListener('click', e => {
+  const row = e.target.closest('.sib-row[data-eiendom]');
+  if (!row) return;
+  const f = _findFeature(row.dataset.eiendom);
+  if (!f) return;
+  const a = featureAnchor(f);
+  if (!a) return;
+  map.closePopup();
+  L.popup({maxWidth: 320})
+    .setLatLng([a[1], a[0]])
+    .setContent(popup(f.properties, a))
+    .openOn(map);
 });
 
 // Right-click context menu on the map → "Legg til markør her" → prompt for
