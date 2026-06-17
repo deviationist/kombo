@@ -189,12 +189,16 @@
     font:600 12px Inter;cursor:pointer;transition:background .12s,color .12s}
   .seg button.on{background:var(--ink);color:var(--ground)}
   /* compact bydel-rank rows */
-  .b-row{display:flex;align-items:center;gap:8px;padding:3px 0;font-size:12px}
+  /* Row-gap (text → own bar) intentionally smaller than the bottom padding
+     (own bar → next row's text), so the bar visually belongs to the line
+     above it, not the one below. */
+  .b-row{display:flex;align-items:center;flex-wrap:wrap;column-gap:8px;row-gap:2px;
+    padding:3px 0 8px;font-size:12px}
   .b-row .b-nm{flex:1;color:var(--ink);line-height:1.2;font-variant-numeric:tabular-nums}
   .b-row .b-ct{color:var(--muted);font-variant-numeric:tabular-nums}
-  .b-row .b-bar{flex-basis:100%;height:3px;border-radius:2px;background:var(--line);overflow:hidden;margin-top:3px;flex:none;width:100%}
+  .b-row .b-bar{flex-basis:100%;width:100%;flex:none;height:3px;
+    border-radius:2px;background:var(--line);overflow:hidden}
   .b-row .b-bar > i{display:block;height:100%;background:var(--c-eby);border-radius:2px}
-  .b-row{flex-wrap:wrap}
   #bydel-stats-empty{color:var(--muted);font-size:11.5px;line-height:1.4}
   .label-row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}
   .label-row .label{margin-bottom:0}
