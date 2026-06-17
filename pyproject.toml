@@ -1,7 +1,7 @@
 [project]
 name = "kombo"
 version = "1.0.0"
-description = "Map Oslo kommune's municipal housing (kommunal bolig) by geocoding matrikkel numbers via Geonorge"
+description = "Map every property Oslo kommune owns — geocoded via Geonorge addresses and Kartverket Teig parcel polygons"
 requires-python = ">=3.10"
 dependencies = [
     "pandas>=2.0",
