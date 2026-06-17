@@ -672,27 +672,40 @@ function filtered(){
   });
 }
 
-// Features that are targeted by an actively-rendered pinned line — they need
-// to appear on the map even if the agency filter would hide them, so the
-// user can actually see what their measurement is pointing at.
-function pinnedTargetFeatures(filteredEi){
-  const out = [];
-  const seen = new Set(filteredEi);
+// Dedicated overlay for the comparison targets of pinned lines. Renders in
+// EVERY view mode — so even in Tetthet/Areal-vekt (where the main map is a
+// heat blob) the user still sees the specific unit their line points at.
+const pinnedTargetOverlay = L.layerGroup().addTo(map);
+function renderPinnedTargetOverlay(){
+  pinnedTargetOverlay.clearLayers();
+  const seen = new Set();
   for (const pin of (typeof userPins !== 'undefined' ? userPins : [])) {
     const visible = visibleOutsideEi(pin);
     for (const ei of (pin.pinnedFeatures || [])) {
       if (!visible.has(ei) || seen.has(ei)) continue;
+      seen.add(ei);
       const f = _findFeature(ei);
-      if (f) { out.push(f); seen.add(ei); }
+      if (!f) continue;
+      const c = colorOf(f.properties.eier);
+      if (f.geometry.type === 'Point') {
+        const [lon, lat] = f.geometry.coordinates;
+        L.marker([lat, lon], {icon: dot(c)})
+          .bindPopup(popup(f.properties, [lon, lat]))
+          .addTo(pinnedTargetOverlay);
+      } else {
+        L.geoJSON(f, {
+          style: () => ({color:c, weight:1.8, fillColor:c, fillOpacity:0.32, opacity:1}),
+          onEachFeature: (ft, layer) => layer.bindPopup(popup(ft.properties, featureAnchor(ft))),
+        }).addTo(pinnedTargetOverlay);
+      }
     }
   }
-  return out;
 }
 
 function render(){
   const rows = filtered();
-  const extras = pinnedTargetFeatures(new Set(rows.map(f => f.properties.eiendom)));
-  const mapRows = extras.length ? rows.concat(extras) : rows;
+  const mapRows = rows;
+  renderPinnedTargetOverlay();
   // Clear all data layers — they're re-attached per mode below.
   clusterLayer.clearLayers();
   if(heatLayer){ map.removeLayer(heatLayer); heatLayer=null; }
