@@ -40,48 +40,14 @@ jobs:
           path: geocode_cache.sqlite
           key: geocode-cache-v1
 
-      - name: Find latest XLSX link
-        id: find
-        run: |
-          set -euo pipefail
-          # Load source-page config — page URL, host, anchor marker — so the
-          # workflow stays unchanged when the kommune restructures the page.
-          set -a; source ./source.env; set +a
-          page="${SOURCE_HOST}${SOURCE_PAGE_PATH}"
-          # Match every anchor on the page, pick the one whose visible text
-          # contains XLSX_LINK_MARKER. Href-pattern-agnostic: works whether the
-          # kommune publishes via /get-file/ (current), /getfile.php/ (April
-          # 2025), or some new endpoint they invent in a future CMS migration.
-          url=$(curl -sSL "$page" | python3 -c "$(cat <<'PY'
-          import sys, re, os
-          html = sys.stdin.read()
-          marker = os.environ['XLSX_LINK_MARKER']
-          host   = os.environ['SOURCE_HOST']
-          for m in re.finditer(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>', html, re.S):
-              href = m.group(1)
-              text = re.sub(r'<[^>]+>', ' ', m.group(2))
-              if marker in text:
-                  print(href if href.startswith('http') else host + href)
-                  break
-          PY
-          )")
-          if [[ -z "$url" ]]; then
-            echo "::error::no anchor matching '${XLSX_LINK_MARKER}' on $page" ; exit 1
-          fi
-          echo "url=$url" >> "$GITHUB_OUTPUT"
-          echo "Found: $url"
-
-      - name: Download XLSX
+      - name: Download latest XLSX
         id: download
         run: |
           set -euo pipefail
-          curl -sSL -o source.xlsx "${{ steps.find.outputs.url }}"
-          # Sanity-check it's actually a spreadsheet (the PDF link has identical
-          # /get-file shape, so a wrong pick would silently produce nonsense).
-          file source.xlsx
-          file source.xlsx | grep -q 'Excel\|Microsoft\|OOXML' || {
-            echo "::error::downloaded file is not XLSX" ; exit 1
-          }
+          # fetch_xlsx.py reads source.env (host, page path, anchor marker)
+          # itself, scrapes the page, finds the XLSX anchor, verifies the
+          # Content-Type, and writes to source.xlsx.
+          poetry run python fetch_xlsx.py -o source.xlsx
           sha=$(sha256sum source.xlsx | cut -d' ' -f1)
           size=$(stat -c%s source.xlsx)
           echo "sha=$sha"   >> "$GITHUB_OUTPUT"
