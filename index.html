@@ -701,10 +701,10 @@ function render(){
   const points = mapRows.filter(f=>f.geometry.type==='Point');
   const polys  = mapRows.filter(f=>f.geometry.type!=='Point');
 
-  // Polygon layer is shared across modes — parcel outlines are always
-  // informative; they don't cluster meaningfully and they don't make sense to
-  // render as heat alone. Skip entirely when the user has toggled them off.
-  if(state.showPolygons && polys.length){
+  // Parcel outlines only make sense in cluster mode — they'd fight the
+  // density visualisation in heat / area-weighted modes. Also gated by the
+  // user's "Vis tomtegrenser" toggle.
+  if(state.showPolygons && polys.length && state.mode === 'clusters'){
     polyLayer = L.geoJSON({type:'FeatureCollection', features:polys}, {
       style: f => {
         const c = colorOf(f.properties.eier);
