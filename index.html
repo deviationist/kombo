@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Oslo kommunes eiendommer · kart</title>
+<title>KomBo · Oslo kommunes eiendommer på kart</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.min.css" />
 <script src="https://cdn.tailwindcss.com"></script>
@@ -160,10 +160,14 @@
   .rail-close:hover{background:var(--panel);border-color:var(--muted);color:var(--ink)}
   #rail-close,
   #rail-r-close{right:14px}
+  header .brand{font:700 22px/1 'Barlow Condensed',sans-serif;letter-spacing:.03em;margin:0 0 10px;color:var(--ink)}
+  header .brand b{font-weight:700;color:var(--c-bolig)}
   header .eyebrow{font:600 11px/1 Inter;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
   header h1{margin:6px 0 0;font:600 26px/1.05 'Barlow Condensed',sans-serif;letter-spacing:.01em}
   header p{margin:8px 0 0;font-size:12.5px;color:var(--muted);line-height:1.45}
   .scroll{overflow-y:auto;padding:16px 20px 24px;flex:1}
+  /* Right rail lost its <header>; pad the scroll so content clears the × close button */
+  #rail-r .scroll{padding-top:42px}
   .scroll::-webkit-scrollbar{width:8px}
   .scroll::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px}
   section{margin-bottom:22px}
@@ -430,6 +434,7 @@
   <aside id="rail">
     <button class="rail-close" id="rail-close" type="button" title="Lukk sidepanelet" aria-label="Lukk sidepanelet">×</button>
     <header>
+      <div class="brand">Kom<b>Bo</b></div>
       <div class="eyebrow" id="eyebrow">Oslo kommune · eiendomsmatrikkel</div>
       <h1>Hvor eier kommunen?</h1>
       <p id="intro">Filtrer og se hvor Oslo kommunes eiendommer ligger.</p>
@@ -491,10 +496,6 @@
 
   <aside id="rail-r">
     <button class="rail-close" id="rail-r-close" type="button" title="Lukk høyre panel" aria-label="Lukk høyre panel">×</button>
-    <header>
-      <div class="eyebrow">Sidepanel</div>
-      <h1>Liste og pins</h1>
-    </header>
     <div class="scroll">
       <details class="rsect" id="rsect-pins" open>
         <summary>Mine punkter <span class="ct" id="pin-section-count">0</span></summary>
