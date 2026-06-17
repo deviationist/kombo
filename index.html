@@ -174,8 +174,12 @@
   header h1{margin:6px 0 0;font:600 26px/1.05 'Barlow Condensed',sans-serif;letter-spacing:.01em}
   header p{margin:8px 0 0;font-size:12.5px;color:var(--muted);line-height:1.45}
   .scroll{overflow-y:auto;padding:16px 20px 24px;flex:1}
-  /* Right rail lost its <header>; pad the scroll so content clears the × close button */
-  #rail-r .scroll{padding-top:42px}
+  /* Right rail lost its <header>; "Mine punkter" sits right at the top, level
+     with the × close button. Only the scroll's small top padding separates it
+     from the edge; the first section's summary gets extra right padding so its
+     count chip doesn't slide under the × button (top-right corner). */
+  #rail-r .scroll{padding-top:6px}
+  #rail-r .rsect:first-of-type > summary{padding-right:30px}
   .scroll::-webkit-scrollbar{width:8px}
   .scroll::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px}
   section{margin-bottom:22px}
@@ -184,6 +188,9 @@
   .figs{display:flex;gap:18px;margin-bottom:4px}
   .fig .n{font:600 30px/1 'Barlow Condensed',sans-serif;font-variant-numeric:tabular-nums}
   .fig .u{font-size:11px;color:var(--muted);margin-top:2px}
+  /* Small parcel ("tomter") sub-count under the eiendommer figure — eierseksjoner
+     mean several eiendommer can share one tomt, so this clarifies the headline. */
+  .fig .sub{font-size:10.5px;color:var(--muted);margin-top:3px;font-variant-numeric:tabular-nums;min-height:1em}
   /* owner toggles + bars */
   .owner{display:flex;align-items:center;gap:5px 10px;padding:10px;border:1px solid var(--line);
     border-radius:8px;margin-bottom:5px;cursor:pointer;user-select:none;background:var(--panel-2);
@@ -453,7 +460,7 @@
       <section>
         <div class="label">I visningen nå</div>
         <div class="figs">
-          <div class="fig"><div class="n" id="fCount">–</div><div class="u">eiendommer</div></div>
+          <div class="fig"><div class="n" id="fCount">–</div><div class="u">eiendommer</div><div class="sub" id="fParcels"></div></div>
           <div class="fig"><div class="n" id="fArea">–</div><div class="u">daa areal</div></div>
         </div>
       </section>
@@ -1285,6 +1292,17 @@ function updateStats(rows){
   document.getElementById('fCount').textContent = fmt(rows.length);
   const daa = rows.reduce((s,f)=>s+(f.properties.areal||0),0)/1000;
   document.getElementById('fArea').textContent = fmt(Math.round(daa));
+  // Distinct parcels ("tomter") — dedupe by (knr,gnr,bnr) exactly like the map
+  // markers + Listevisning. Shown small under the eiendommer figure, but only
+  // when it differs (i.e. eierseksjoner are in view) so it never reads as a
+  // redundant "N eiendommer / N tomter".
+  const parcels = new Set();
+  for (const f of rows) {
+    const m = parseMatrikkel(f.properties.eiendom);
+    parcels.add(m ? `${m.knr}/${m.gnr}/${m.bnr}` : f.properties.eiendom);
+  }
+  const fParcels = document.getElementById('fParcels');
+  if (fParcels) fParcels.textContent = parcels.size < rows.length ? `på ${fmt(parcels.size)} tomter` : '';
   // Owner bars/counts stay independent of the owner toggles (so every agency
   // keeps a visible magnitude) but DO respect the active layers: the in-Oslo
   // layer contributes its bydel-filtered parcels when shown, the utenbys layer
