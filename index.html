@@ -745,9 +745,9 @@ function detailPopupHTML(p, anchor, siblings){
     navHtml = `<div class="popup-nav">
       <button class="popup-jump nav-btn" data-eiendom="${backEi}" data-mode="list" title="Tilbake til oversikt">↩</button>
       <span class="nav-spacer"></span>
-      <button class="popup-jump nav-btn" data-dir="prev" ${prev ? `data-eiendom="${prev.properties.eiendom}"` : 'disabled'} title="Forrige enhet (←)">←</button>
+      <button class="popup-jump nav-btn" data-dir="prev" data-mode="detail" ${prev ? `data-eiendom="${prev.properties.eiendom}"` : 'disabled'} title="Forrige enhet (←)">←</button>
       <span class="nav-pos">enhet ${idx+1} av ${siblings.length}</span>
-      <button class="popup-jump nav-btn" data-dir="next" ${next ? `data-eiendom="${next.properties.eiendom}"` : 'disabled'} title="Neste enhet (→)">→</button>
+      <button class="popup-jump nav-btn" data-dir="next" data-mode="detail" ${next ? `data-eiendom="${next.properties.eiendom}"` : 'disabled'} title="Neste enhet (→)">→</button>
     </div>`;
   }
   // When the row is an eierseksjon or festenummer, append the unit number
@@ -1812,10 +1812,19 @@ function jumpToFeature(ei, mode = 'auto'){
   if (!f) return;
   const a = featureAnchor(f);
   if (!a) return;
-  L.popup({maxWidth: 320})
-    .setLatLng([a[1], a[0]])
-    .setContent(popup(f.properties, a, mode))
-    .openOn(map);    // openOn closes any existing popup automatically
+  const html = popup(f.properties, a, mode);
+  // If a popup is already open, update its content + position in place —
+  // avoids the close/open fade cycle that flashes the popup on every
+  // prev/next click.
+  if (map._popup && map._popup.isOpen()) {
+    map._popup.setLatLng([a[1], a[0]]);
+    map._popup.setContent(html);
+  } else {
+    L.popup({maxWidth: 320})
+      .setLatLng([a[1], a[0]])
+      .setContent(html)
+      .openOn(map);
+  }
 }
 document.addEventListener('click', e => {
   const el = e.target.closest('.popup-jump[data-eiendom]');
@@ -1832,7 +1841,7 @@ document.addEventListener('keydown', e => {
   if (!popupEl) return;
   const dir = e.key === 'ArrowLeft' ? 'prev' : 'next';
   const btn = popupEl.querySelector(`.nav-btn[data-dir="${dir}"][data-eiendom]:not([disabled])`);
-  if (btn) { e.preventDefault(); jumpToFeature(btn.dataset.eiendom); }
+  if (btn) { e.preventDefault(); jumpToFeature(btn.dataset.eiendom, btn.dataset.mode || 'auto'); }
 });
 
 // Right-click context menu on the map → "Legg til markør her" → prompt for
