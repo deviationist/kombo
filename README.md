@@ -1,54 +1,47 @@
-# KomBo — Oslo kommunes boliger på kart
+# kombo — Oslo kommunes eiendommer på kart
 
-A two-step pipeline that maps **Oslo kommune's municipal housing** — the places
-the city owns where people actually live.
+A two-step pipeline that maps **every property Oslo kommune owns** — across all
+four municipal bodies: from rental housing to schools, from road parcels to the
+harbour. Live at **<https://kombo.ichiva.no/>**.
 
 ```
 XLSX ──(geocode.py)──> eiendommer.geojson ──(index.html)──> map in browser
 ```
 
-## Scope: housing only
+## What's in scope
 
-The source spreadsheet lists all 7,022 municipally-owned properties across four
-agencies, but most of that is land and road parcels. KomBo filters to the
-housing stock via `INCLUDE_EIER` in `geocode.py`:
+The source spreadsheet (`Oversikt over Oslo kommunes eiendommer per mai 2026`,
+re-published every six months by the kommune) lists every property the city
+owns — 7,022 rows split across four owning agencies:
 
-| Eier / fester | Antall | In scope? |
+| Eier / fester | Antall | Rolle |
 |---|---|---|
-| **Boligbygg Oslo KF** | **528** | ✅ municipal housing (default) |
-| Oslobygg KF | 795 | public buildings — schools, offices, ~5 care homes |
-| Eiendoms- og byfornyelsesetaten | 5,621 | land + road parcels |
-| Oslo Havn KF | 78 | harbour |
+| Eiendoms- og byfornyelsesetaten | 5,621 | Tomter og veiareal — kommunens største grunneier |
+| Oslobygg KF | 795 | Formålsbygg: skoler, barnehager, sykehjem, idrettsanlegg, kontorer |
+| Boligbygg Oslo KF | 528 | Kommunale utleieboliger |
+| Oslo Havn KF | 78 | Havnevirksomhet og eiendommer langs sjøsiden |
 
-The 528 Boligbygg rows dedupe to **356 unique (gnr, bnr) pairs** and **91% have
-a registered address**, so geocoding runs in about a minute with near-complete
-coverage. (199 rows are *eierseksjoner* — individual flats — that share a
-building's gnr/bnr, so they map to the same point. Fine for a coverage view.)
+All four are mapped by default. The scope is configurable via `INCLUDE_EIER` in
+`source.env` if you want to filter (e.g. only housing).
 
-To widen the net to municipal care/senior homes (gamlehjem, eldresenter,
-sykehjem, trygdebolig — a handful under Oslobygg KF), add the agency to
-`INCLUDE_EIER`. To map the entire register instead, set `INCLUDE_EIER = []`.
+## Why two geocoders, not one
 
-## Why geocoding is needed
+There are no coordinates in the source file — only a **matrikkelnummer** per
+row (`0301 - 10 / 68 / 0 / 0`, where `0301` = Oslo). Two complementary
+resolvers convert it to map geometry:
 
-There are no coordinates in the file. What every row *does* have is a clean
-**matrikkelnummer** in the `Eiendom` column:
+1. **Geonorge address API** (free, no key) — gives a point at the parcel's
+   registered street address. Covers about a third of the register; the
+   municipal *buildings* (Boligbygg housing, Oslobygg schools/care homes) all
+   have addresses. Also returns `postnummer` + `poststed` for the popup.
+2. **Kartverket "Matrikkelen – Eiendomskart Teig" WFS** (free, no key) —
+   gives the *polygon* of the parcel itself, used both as a fallback for
+   address-less rows AND alongside Geonorge so addressed properties also show
+   the building's footprint on the map.
 
-```
-0301 - 10 / 68 / 0 / 0
-KNR    GNR  BNR FNR SNR     (KNR 0301 = Oslo)
-```
-
-`geocode.py` resolves `(gnr, bnr)` to lat/lon using Geonorge's open address API
-(no key, returns WGS84):
-
-```
-https://ws.geonorge.no/adresser/v1/sok?kommunenummer=0301&gardsnummer=10&bruksnummer=68&utkoordsys=4326
-```
-
-It deduplicates 7 022 rows down to **6 636 unique (gnr, bnr) pairs**, caches
-every lookup in SQLite (so re-runs are instant and resumable), and writes
-`eiendommer.geojson`.
+The pipeline deduplicates 7,022 rows to ~6,636 unique `(gnr, bnr)` pairs and
+caches every API answer in SQLite (`geocode_cache.sqlite`) so re-runs are
+instant and resumable.
 
 ## Run it
 
@@ -59,43 +52,50 @@ poetry install
 poetry run python geocode.py "Oversikt-over-Oslo-kommunes-eiendommer-mai-2026_nett-2.xlsx"
 # → eiendommer.geojson, geocode_cache.sqlite, missing.csv
 
-# then just open the map (any static server; it fetches the geojson):
+# then serve the map (any static server; index.html fetches the geojson):
 poetry run python -m http.server 8000   # → http://localhost:8000/index.html
 ```
 
-`poetry install` generates a `poetry.lock` on first run. To drop into a shell
-with the venv active instead of prefixing every command: `poetry shell` (or the
-`poetry-plugin-shell` plugin on Poetry 2.x), then run `python geocode.py …`.
+A full cold run hits Geonorge ~6,636 times and Kartverket Teig ~6,500 times.
+Polite sleeps (50 ms / 125 ms) keep both services happy; expect 30–60 minutes
+on a fresh cache, near-instant on subsequent runs.
 
-`index.html` already renders with a small sample if `eiendommer.geojson` isn't
-there yet, so you can see the UI before geocoding finishes.
+`index.html` renders an embedded sample if `eiendommer.geojson` isn't there
+yet, so you can poke at the UI before geocoding finishes.
 
-## Coverage
+## Auto-sync from upstream
 
-With the housing filter, ~91% of rows geocode by address — the missing handful
-land in `missing.csv`. (Across the *full* register it's only ~28%, because road
-land and unregistered land have no address; that's why scoping to housing fixes
-the coverage problem rather than needing parcel polygons.) If you do switch to
-the full register later and want the road/land parcels too, you'd resolve those
-against Kartverket's *"Matrikkelen – Eiendomskart Teig"* WFS keyed on the
-matrikkelnummer — the geocoder is structured so a second resolver for the
-missing pairs slots in without touching the rest.
+`.github/workflows/sync.yml` runs every Monday: scrapes Oslo kommune's
+[eiendomsoversikt page](https://www.oslo.kommune.no/plan-bygg-og-eiendom/kart-og-eiendomsinformasjon/kommunal-eiendom/eiendomsoversikt/)
+for the latest XLSX link (anchor text `(XLSX)` — format-agnostic; the kommune
+migrated their CMS at some point and the old `/getfile.php/<id>-<timestamp>/`
+became `/get-file/<id>/<hash>/`, both handled by the same scraper), downloads
+the file, runs `geocode.py`, and commits the regenerated `eiendommer.geojson`
+if anything changed. The kommune republishes the file every six months, so
+weekly polling is plenty.
+
+Page URL + anchor marker + filter scope all live in `source.env` so a future
+restructure can be fixed without touching the workflow YAML.
 
 ## The map (`index.html`)
 
-Single file, no build step, CDN deps (Leaflet + markercluster + leaflet.heat).
-Self-hostable behind nginx on xavi.
+Single file, no build step, CDN deps (Leaflet + markercluster + leaflet.heat +
+Tailwind Play CDN). Deployed automatically to GitHub Pages on every push to
+`main`.
 
 - **Punkter** — clustered markers, coloured by owning agency
 - **Tetthet** — heat layer (where ownership clusters)
-- **Areal-vekt** — heat weighted by parcel size (big sites glow brighter — this
-  is the "which areas are dominated by municipal land" view)
-- Toggle agencies on/off; filter by bydel; live count + total areal (daa) and
-  per-agency bars for the current selection
+- **Areal-vekt** — heat weighted by parcel size (big sites glow brighter)
+- **Parcel polygons** — Kartverket Teig outlines styled per agency colour
+- Toggle agencies, filter by bydel, switch basemap (CARTO Mørk / Lys / Esri
+  Satellitt) — selections + map centre/zoom + sidebar state all persist in
+  localStorage
+- Light/dark palette follows `prefers-color-scheme`; saved layer choice wins
+- Popup links straight into Google Maps Street View per marker
 
 ### Swapping the basemap / using Mapbox or MapLibre
 
-It uses the free CARTO dark basemap (no token). To use Mapbox GL instead, that's
-a rewrite to `mapbox-gl-js` with a token; for a token-free vector alternative,
-MapLibre GL + a free style is the closer drop-in. The GeoJSON output is standard,
+Three basemaps ship by default — CARTO `dark_all`, CARTO `light_all`, and
+Esri World Imagery (all token-free). To swap to Mapbox GL or MapLibre GL,
+that's a rewrite of the `L.tileLayer` calls; the GeoJSON output is standard,
 so it feeds any of them — Google Maps, Mapbox, MapLibre, Leaflet, or QGIS.
