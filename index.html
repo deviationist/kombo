@@ -848,26 +848,34 @@ function userPinIcon(){
       box-shadow:0 0 0 2px var(--halo), 0 2px 6px var(--halo-glow)"></div>`});
 }
 
-function pinPopupHTML(pin){
-  // Two sections: features the pin is INSIDE get a short contextual list (no
-  // distance — distance to a property you're standing on isn't interesting).
-  // Features OUTSIDE the pin are ranked by distance (in the current mode —
-  // edge or marker), top 5, with clickable comparison lines.
+// Outside-ranked features for a given pin — the same set used by both the
+// popup's "nearest" list AND the pinned-line renderer, so lines can only
+// exist for features the user can see in the list.
+function outsideRanked(pin){
   const all = DATA.map(f => {
     const r = featureClosestForMode(pin, f);
     return r ? { ...r, f } : null;
   }).filter(Boolean);
-  // Inside section stays inclusive — knowing you're standing on an EBY road
-  // parcel is useful context.
-  const inside  = all.filter(x => x.inside).slice(0, 5);
-  // Outside (ranked) prefers buildings: filter out Eiendoms- og byfornyelses-
-  // etaten (tomter / veiareal — usually less interesting to compare to than
-  // schools, housing, harbour buildings). Fall back to the full list if the
-  // filter would leave us empty.
-  const isBuildingEier = e => e !== 'Eiendoms- og byfornyelsesetaten';
   const outsideAll = all.filter(x => !x.inside).sort((a,b) => a.dist - b.dist);
+  const isBuildingEier = e => e !== 'Eiendoms- og byfornyelsesetaten';
   const outsideBuildings = outsideAll.filter(x => isBuildingEier(x.f.properties.eier));
-  const outside = (outsideBuildings.length ? outsideBuildings : outsideAll).slice(0, 25);
+  return (outsideBuildings.length ? outsideBuildings : outsideAll).slice(0, 25);
+}
+function visibleOutsideEi(pin){
+  return new Set(outsideRanked(pin).map(x => x.f.properties.eiendom));
+}
+
+function pinPopupHTML(pin){
+  // Two sections: features the pin is INSIDE get a short contextual list (no
+  // distance — distance to a property you're standing on isn't interesting).
+  // Features OUTSIDE the pin are ranked by distance (in the current mode —
+  // edge or marker), top 25 scrollable, with clickable comparison lines.
+  const all = DATA.map(f => {
+    const r = featureClosestForMode(pin, f);
+    return r ? { ...r, f } : null;
+  }).filter(Boolean);
+  const inside  = all.filter(x => x.inside).slice(0, 5);
+  const outside = outsideRanked(pin);
 
   const insideRows = inside.map(({f}) => {
     const p = f.properties;
@@ -1099,11 +1107,16 @@ function clearPinLines(pinId){
   pinLineByEi.delete(pinId);
 }
 // Tear down + rebuild ALL pins' lines — used when distanceMode changes so
-// every line's endpoint reflects the new metric.
+// every line's endpoint reflects the new metric. Only renders lines for
+// features still visible in the popup's outside list (post building-filter
+// and rank-25 cap) — so a feature pinned earlier that's now hidden from
+// the list stops drawing its line too.
 function rebuildAllPinLines(){
   for (const pin of userPins) {
     clearPinLines(pin.id);
+    const visible = visibleOutsideEi(pin);
     (pin.pinnedFeatures || []).forEach(ei => {
+      if (!visible.has(ei)) return;
       const f = _findFeature(ei);
       if (f) addPinnedLine(pin, f);
     });
@@ -1615,7 +1628,11 @@ async function boot(){
   userPins.forEach(p => {
     renderPinMarker(p);
     if (p.teig) renderPinTeig(p);
+    // Boot restore matches the runtime filter — only draw lines for
+    // pinned features that are currently visible in the outside list.
+    const visible = visibleOutsideEi(p);
     (p.pinnedFeatures || []).forEach(ei => {
+      if (!visible.has(ei)) return;
       const f = _findFeature(ei);
       if (f) addPinnedLine(p, f);
     });
