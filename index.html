@@ -6,6 +6,41 @@
 <title>Oslo kommunes eiendommer · kart</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.min.css" />
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  // Tailwind config — expose the project palette as utility tokens so any
+  // new markup can use `bg-panel`, `text-ink`, etc. Light-mode values come
+  // from the CSS variables declared below, so dark/light switching is
+  // automatic via prefers-color-scheme without any Tailwind dark: variants.
+  tailwind.config = {
+    darkMode: 'media',
+    // Skip Tailwind's Preflight reset — the existing CSS already defines a
+    // deliberate look (especially form controls), and Preflight strips the
+    // browser defaults Tailwind expects to layer styles back onto. Tailwind
+    // utility classes still work; we just don't reset everything first.
+    corePlugins: { preflight: false },
+    theme: {
+      extend: {
+        fontFamily: {
+          display: ['"Barlow Condensed"', 'sans-serif'],
+          sans:    ['Inter', 'system-ui', 'sans-serif'],
+        },
+        colors: {
+          ground:    'var(--ground)',
+          panel:     'var(--panel)',
+          'panel-2': 'var(--panel-2)',
+          line:      'var(--line)',
+          ink:       'var(--ink)',
+          muted:     'var(--muted)',
+          eby:   '#5fb6b0',
+          bygg:  '#e0a54a',
+          bolig: '#d4664a',
+          havn:  '#4f7fd6',
+        },
+      },
+    },
+  };
+</script>
 <script>
   // FOUC guard: read rail-collapsed from localStorage before first paint so
   // the sidebar starts in its saved state instead of expanding then snapping
@@ -21,10 +56,28 @@
   :root{
     --ground:#0e1417; --panel:#161d21; --panel-2:#1d262b; --line:#2a363c;
     --ink:#e8edf0; --muted:#8a979e;
+    --halo:rgba(255,255,255,.92);              /* contrast ring around markers/clusters */
+    --halo-soft:rgba(255,255,255,.85);
+    --halo-glow:rgba(0,0,0,.45);                /* outer drop-shadow under markers */
+    --inner-ring:rgba(14,20,23,.6);             /* tight dark line inside the halo */
+    --attr-bg:rgba(14,20,23,.8);                /* leaflet attribution background */
     --c-eby:#5fb6b0;   /* Eiendoms- og byfornyelsesetaten */
     --c-bygg:#e0a54a;  /* Oslobygg KF */
     --c-bolig:#d4664a; /* Boligbygg Oslo KF */
     --c-havn:#4f7fd6;  /* Oslo Havn KF */
+  }
+  @media (prefers-color-scheme: light) {
+    :root{
+      --ground:#f4f6f8; --panel:#ffffff; --panel-2:#eef2f6; --line:#d6dde3;
+      --ink:#1a2229;   --muted:#5a6770;
+      /* Halo flips to a dark contrast ring — white halo would vanish on a
+         light basemap. Drop-shadow stays soft. */
+      --halo:rgba(28,40,52,.55);
+      --halo-soft:rgba(28,40,52,.35);
+      --halo-glow:rgba(28,40,52,.18);
+      --inner-ring:rgba(255,255,255,.7);
+      --attr-bg:rgba(244,246,248,.85);
+    }
   }
   *{box-sizing:border-box}
   html,body{margin:0;height:100%;background:var(--ground);color:var(--ink);
@@ -77,16 +130,16 @@
   .fig .n{font:600 30px/1 'Barlow Condensed',sans-serif;font-variant-numeric:tabular-nums}
   .fig .u{font-size:11px;color:var(--muted);margin-top:2px}
   /* owner toggles + bars */
-  .owner{display:flex;align-items:center;gap:10px;padding:9px 10px;border:1px solid var(--line);
-    border-radius:9px;margin-bottom:7px;cursor:pointer;user-select:none;background:var(--panel-2);
+  .owner{display:flex;align-items:center;gap:5px 10px;padding:10px;border:1px solid var(--line);
+    border-radius:8px;margin-bottom:5px;cursor:pointer;user-select:none;background:var(--panel-2);
     transition:border-color .12s,opacity .12s}
   .owner:hover{border-color:var(--muted)}
   .owner.off{opacity:.38}
-  .owner .dot{width:11px;height:11px;border-radius:50%;flex:none;align-self:flex-start;margin-top:3px}
-  .owner .nm{font-size:12.5px;flex:1;line-height:1.25}
-  .owner .desc{flex-basis:100%;margin-left:21px;margin-top:4px;color:var(--muted);font-size:11.5px;line-height:1.35}
+  .owner .dot{width:10px;height:10px;border-radius:50%;flex:none;align-self:flex-start;margin-top:4px}
+  .owner .nm{font-size:12.5px;flex:1;line-height:1.2}
+  .owner .desc{flex-basis:100%;margin-left:20px;margin-top:2px;color:var(--muted);font-size:11px;line-height:1.3}
   .owner .ct{font:500 12px/1 Inter;color:var(--muted);font-variant-numeric:tabular-nums}
-  .bar{height:4px;border-radius:3px;margin-top:7px;background:var(--line);overflow:hidden}
+  .bar{height:3px;border-radius:2px;margin-top:5px;background:var(--line);overflow:hidden}
   .bar > i{display:block;height:100%;border-radius:3px}
   /* select + segmented */
   select{width:100%;background:var(--panel-2);color:var(--ink);border:1px solid var(--line);
@@ -95,6 +148,16 @@
   .seg button{flex:1;background:var(--panel-2);color:var(--muted);border:0;padding:9px 4px;
     font:600 12px Inter;cursor:pointer;transition:background .12s,color .12s}
   .seg button.on{background:var(--ink);color:var(--ground)}
+  .label-row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}
+  .label-row .label{margin-bottom:0}
+  .info-btn{appearance:none;background:transparent;border:1px solid var(--line);color:var(--muted);
+    width:18px;height:18px;border-radius:50%;font:600 11px/1 Inter;cursor:pointer;
+    display:inline-flex;align-items:center;justify-content:center;padding:0;
+    transition:background .12s,color .12s,border-color .12s}
+  .info-btn:hover{background:var(--panel-2);color:var(--ink);border-color:var(--muted)}
+  .info-btn.on{background:var(--ink);color:var(--ground);border-color:var(--ink)}
+  .mode-desc{margin-top:8px;color:var(--muted);font-size:11.5px;line-height:1.4;display:none}
+  .mode-desc.open{display:block}
   /* banner */
   #banner{display:none;background:#3a2c12;border:1px solid #6b5220;color:#f0d9a8;
     border-radius:9px;padding:10px 12px;font-size:12px;line-height:1.4;margin-bottom:18px}
@@ -109,7 +172,7 @@
   .pk{color:var(--muted)}
   .sv-link{display:inline-block;margin-top:6px;color:var(--c-eby);text-decoration:none;font-size:12px;font-weight:500}
   .sv-link:hover{text-decoration:underline}
-  .leaflet-control-attribution{background:rgba(14,20,23,.8)!important;color:var(--muted)!important}
+  .leaflet-control-attribution{background:var(--attr-bg)!important;color:var(--muted)!important}
   .leaflet-control-attribution a{color:var(--muted)!important}
   @media (max-width:760px){
     #app{flex-direction:column}#rail{width:100%;height:46%;border-right:0;border-bottom:1px solid var(--line)}
@@ -137,6 +200,19 @@
       </section>
 
       <section>
+        <div class="label-row">
+          <div class="label">Visning</div>
+          <button class="info-btn" id="mode-info" type="button" aria-label="Forklar visningsmodi" title="Forklar visningsmodi">?</button>
+        </div>
+        <div class="seg" id="mode">
+          <button data-m="clusters" class="on" title="Hver eiendom som egen markør — gruppert i klynger når man zoomer ut.">Punkter</button>
+          <button data-m="heat"               title="Varmekart der hver eiendom teller likt — viser hvor det er flest eiendommer per område.">Tetthet</button>
+          <button data-m="heatArea"           title="Varmekart vektet på areal — store eiendommer lyser sterkere. Viser hvor kommunen dominerer arealmessig.">Areal-vekt</button>
+        </div>
+        <div class="mode-desc" id="mode-desc"></div>
+      </section>
+
+      <section>
         <div class="label">Eier / fester</div>
         <div id="owners"></div>
       </section>
@@ -144,15 +220,6 @@
       <section>
         <div class="label">Bydel</div>
         <select id="bydel"><option value="">Alle bydeler</option></select>
-      </section>
-
-      <section>
-        <div class="label">Visning</div>
-        <div class="seg" id="mode">
-          <button data-m="clusters" class="on">Punkter</button>
-          <button data-m="heat">Tetthet</button>
-          <button data-m="heatArea">Areal-vekt</button>
-        </div>
       </section>
     </div>
     <footer>
@@ -169,22 +236,30 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.heat/0.2.0/leaflet-heat.js"></script>
 <script>
 const OWNERS = [
+  {key:"Boligbygg Oslo KF", short:"Boligbygg Oslo KF",
+   desc:"Eier og leier ut kommunale boliger — særlig til personer som trenger hjelp i boligmarkedet.",
+   color:getComputedStyle(document.documentElement).getPropertyValue('--c-bolig').trim()},
   {key:"Eiendoms- og byfornyelsesetaten", short:"Eiendoms- og byfornyelsesetaten",
    desc:"Forvalter grunneiendom og veigrunn — den største eieren, mest tomter og veiareal.",
    color:getComputedStyle(document.documentElement).getPropertyValue('--c-eby').trim()},
   {key:"Oslobygg KF",       short:"Oslobygg KF",
    desc:"Bygger og drifter formålsbygg: skoler, barnehager, sykehjem, idrettsanlegg, kontorer.",
    color:getComputedStyle(document.documentElement).getPropertyValue('--c-bygg').trim()},
-  {key:"Boligbygg Oslo KF", short:"Boligbygg Oslo KF",
-   desc:"Eier og leier ut kommunale boliger — særlig til personer som trenger hjelp i boligmarkedet.",
-   color:getComputedStyle(document.documentElement).getPropertyValue('--c-bolig').trim()},
   {key:"Oslo Havn KF",      short:"Oslo Havn KF",
    desc:"Drifter havnevirksomheten og forvalter eiendommene langs sjøsiden.",
    color:getComputedStyle(document.documentElement).getPropertyValue('--c-havn').trim()},
 ];
+// Default selection on a fresh visit: only municipal housing. Saved selection
+// in localStorage (loadState below) overrides this if the user has toggled.
+const DEFAULT_ACTIVE_OWNERS = ["Boligbygg Oslo KF"];
 const colorOf = k => (OWNERS.find(o=>o.key===k)||{color:"#8a979e"}).color;
-const active = new Set(OWNERS.map(o=>o.key));
-let state = {bydel:"", mode:"clusters", base:"dark", center:[59.913,10.74], zoom:11, railCollapsed:false};
+const active = new Set(DEFAULT_ACTIVE_OWNERS);
+// Default base layer follows the OS colour scheme on a fresh visit; a saved
+// explicit choice (from the layer-control) wins via loadState.
+const _sysLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
+let state = {bydel:"", mode:"clusters",
+             base: _sysLight ? 'light' : 'dark',
+             center:[59.913,10.74], zoom:11, railCollapsed:false, modeInfoOpen:false};
 let DATA = [];
 
 // ---- localStorage persistence ---------------------------------------------
@@ -196,19 +271,20 @@ function loadState(){
     const s = JSON.parse(raw);
     if(typeof s.bydel === 'string') state.bydel = s.bydel;
     if(['clusters','heat','heatArea'].includes(s.mode)) state.mode = s.mode;
-    if(['dark','sat'].includes(s.base)) state.base = s.base;
+    if(['dark','light','sat'].includes(s.base)) state.base = s.base;
     if(Array.isArray(s.center) && s.center.length===2 &&
        s.center.every(n => typeof n === 'number' && isFinite(n))){
       state.center = s.center;
     }
     if(typeof s.zoom === 'number' && s.zoom >= 0 && s.zoom <= 22) state.zoom = s.zoom;
     if(typeof s.railCollapsed === 'boolean') state.railCollapsed = s.railCollapsed;
+    if(typeof s.modeInfoOpen === 'boolean') state.modeInfoOpen = s.modeInfoOpen;
     if(Array.isArray(s.active)){
       active.clear();
       s.active.filter(k => OWNERS.some(o => o.key===k)).forEach(k => active.add(k));
-      // If all four were untoggled in storage (e.g. accidental clear), bring
-      // them back rather than render an empty map.
-      if(active.size === 0) OWNERS.forEach(o => active.add(o.key));
+      // If all owners were untoggled in storage (e.g. accidental clear), fall
+      // back to the default so we don't render an empty map.
+      if(active.size === 0) DEFAULT_ACTIVE_OWNERS.forEach(k => active.add(k));
     }
   }catch(e){ /* corrupt JSON / unavailable storage — ignore */ }
 }
@@ -216,7 +292,8 @@ function saveState(){
   try{
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       bydel: state.bydel, mode: state.mode, base: state.base, active: [...active],
-      center: state.center, zoom: state.zoom, railCollapsed: state.railCollapsed,
+      center: state.center, zoom: state.zoom,
+      railCollapsed: state.railCollapsed, modeInfoOpen: state.modeInfoOpen,
     }));
   }catch(e){ /* private mode etc. */ }
 }
@@ -232,12 +309,19 @@ map.on('moveend zoomend', () => {
 const darkLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
   attribution:'&copy; OpenStreetMap &copy; CARTO', maxZoom:19, subdomains:'abcd'
 });
+const lightLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',{
+  attribution:'&copy; OpenStreetMap &copy; CARTO', maxZoom:19, subdomains:'abcd'
+});
 const satLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{
   attribution:'Tiles &copy; Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community', maxZoom:19
 });
-(state.base==='sat'?satLayer:darkLayer).addTo(map);
-L.control.layers({'Mørk': darkLayer, 'Satellitt': satLayer}, {}, {position:'topright', collapsed:true}).addTo(map);
-map.on('baselayerchange', e => { state.base = (e.name==='Satellitt' ? 'sat' : 'dark'); saveState(); });
+const BASE_BY_KEY = { dark: darkLayer, light: lightLayer, sat: satLayer };
+(BASE_BY_KEY[state.base] || darkLayer).addTo(map);
+L.control.layers({'Mørk': darkLayer, 'Lys': lightLayer, 'Satellitt': satLayer}, {}, {position:'topright', collapsed:true}).addTo(map);
+map.on('baselayerchange', e => {
+  state.base = ({'Mørk':'dark','Lys':'light','Satellitt':'sat'})[e.name] || 'dark';
+  saveState();
+});
 
 let clusterLayer = L.markerClusterGroup({
   chunkedLoading:true, maxClusterRadius:22, spiderfyOnMaxZoom:true, disableClusteringAtZoom:16,
@@ -245,13 +329,14 @@ let clusterLayer = L.markerClusterGroup({
   iconCreateFunction(cluster){
     const n = cluster.getChildCount();
     const s = n<10?30:n<100?38:n<1000?46:54;
-    // Solid teal fill + dark text + white-ish outer halo. Works on the dark
-    // basemap (subtle accent) and on satellite imagery (high contrast).
+    // Solid teal fill + dark text + halo. The halo + inner ring + glow are
+    // CSS-var driven, so they invert on light mode (dark halo) and stay
+    // legible on satellite imagery.
     return L.divIcon({html:`<div style="display:flex;align-items:center;justify-content:center;
       width:${s}px;height:${s}px;border-radius:50%;
       background:#5fb6b0;color:#0e1417;
-      border:2px solid rgba(255,255,255,.85);
-      box-shadow:0 0 0 1px rgba(14,20,23,.5), 0 2px 6px rgba(0,0,0,.45);
+      border:2px solid var(--halo-soft);
+      box-shadow:0 0 0 1px var(--inner-ring), 0 2px 6px var(--halo-glow);
       font:700 12px Inter">${n}</div>`,
       className:'', iconSize:[s,s]});
   }
@@ -260,12 +345,12 @@ let heatLayer = null;
 let polyLayer = null;
 
 function dot(color){
-  // White halo + dark inner ring keeps the dot legible on both the dark
-  // basemap and satellite imagery (where coloured dots wash out on grass/snow).
+  // Halo + inner ring use CSS vars so they invert on the light basemap
+  // (dark halo) and stay legible on dark / satellite imagery (white halo).
   return L.divIcon({className:'',iconSize:[14,14],
     html:`<div style="width:14px;height:14px;border-radius:50%;background:${color};
-      border:2px solid rgba(255,255,255,.92);
-      box-shadow:0 0 0 1px rgba(14,20,23,.6), 0 1px 4px rgba(0,0,0,.45)"></div>`});
+      border:2px solid var(--halo);
+      box-shadow:0 0 0 1px var(--inner-ring), 0 1px 4px var(--halo-glow)"></div>`});
 }
 const fmt = n => n.toLocaleString('nb-NO');
 // First vertex of a polygon ring — good-enough anchor for a Street View link
@@ -418,12 +503,29 @@ railToggle.addEventListener('click', () => {
   // overlay rail moves. That's the whole point of this layout.
 });
 
-// Restore mode-button .on state from storage before wiring the click handler.
-document.querySelectorAll('#mode button').forEach(b => b.classList.toggle('on', b.dataset.m === state.mode));
+// Mode button copy & inline descriptions (shown under the segment so the
+// difference between Tetthet and Areal-vekt is discoverable without hovering).
+const MODE_DESC = {
+  clusters: 'Hver eiendom som egen markør, gruppert i klynger når man zoomer ut.',
+  heat:     'Varmekart der hver eiendom teller likt — viser hvor det er flest eiendommer per område.',
+  heatArea: 'Varmekart vektet på areal — store eiendommer lyser sterkere. Viser hvor kommunen dominerer arealmessig.',
+};
+const modeDescEl = document.getElementById('mode-desc');
+const modeInfoBtn = document.getElementById('mode-info');
+function applyModeUi(){
+  document.querySelectorAll('#mode button').forEach(b => b.classList.toggle('on', b.dataset.m === state.mode));
+  modeDescEl.textContent = MODE_DESC[state.mode] || '';
+  modeDescEl.classList.toggle('open', state.modeInfoOpen);
+  modeInfoBtn.classList.toggle('on', state.modeInfoOpen);
+}
+applyModeUi();
+modeInfoBtn.addEventListener('click', () => {
+  state.modeInfoOpen = !state.modeInfoOpen;
+  applyModeUi(); saveState();
+});
 document.getElementById('mode').addEventListener('click',e=>{
   const b=e.target.closest('button'); if(!b) return;
-  document.querySelectorAll('#mode button').forEach(x=>x.classList.remove('on'));
-  b.classList.add('on'); state.mode=b.dataset.m; saveState(); render();
+  state.mode=b.dataset.m; applyModeUi(); saveState(); render();
 });
 
 // ---- sample fallback so the map renders before geocode.py is run ----
