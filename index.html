@@ -253,9 +253,12 @@
   .pin-pop .prox-list::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px}
   .pin-pop .prox-hdr{margin-top:6px;margin-bottom:1px}
   .pin-pop .prox-hdr:first-child{margin-top:0}
-  /* Detail-mode nav strip: Back + prev/next when there are sibling units. */
+  /* Detail-mode nav strip: Back + prev/next when there are sibling units.
+     padding-right reserves space for Leaflet's own × close button at the
+     top-right of the popup so Next doesn't collide with it. */
   .popup-nav{display:flex;align-items:center;gap:6px;
-    margin:-2px 0 6px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+    margin:-2px 0 6px;padding-right:22px;padding-bottom:6px;
+    border-bottom:1px solid var(--line)}
   .popup-nav .nav-spacer{flex:1}
   .popup-nav .nav-btn{appearance:none;background:var(--panel-2);
     border:1px solid var(--line);color:var(--ink);width:26px;height:24px;
