@@ -791,9 +791,10 @@ function buildOwners(){
       if(active.has(o.key)) active.delete(o.key); else active.add(o.key);
       div.classList.toggle('off', !active.has(o.key));
       saveState();
-      // active set drives both the map render AND the popup proximity list,
-      // so refresh popups + rebuild pinned lines in lockstep.
-      refreshPopupsAndLines();
+      // Active set only filters the MAP — popup proximity is property-wide
+      // (see outsideRanked). render() pulls in any pinned-target features
+      // whose agency is currently hidden.
+      render();
     };
     wrap.appendChild(div);
   });
@@ -965,15 +966,15 @@ function userPinIcon(){
 const MAX_PROXIMITY_M = 150;
 const isBuildingEier = e => e !== 'Eiendoms- og byfornyelsesetaten';
 function outsideRanked(pin){
-  // Respect the left sidebar's agency filter — if the user has unchecked an
-  // agency on the map, hide its features from the comparison list too.
-  const all = DATA
-    .filter(f => active.has(f.properties.eier))
-    .map(f => {
-      const r = featureClosestForMode(pin, f);
-      return r ? { ...r, f } : null;
-    })
-    .filter(Boolean);
+  // Proximity is always computed against ALL agencies — the left-sidebar
+  // filter only controls what's drawn on the map, not what's measurable.
+  // If the user pins a line to a hidden-agency feature, render() pulls
+  // that feature in as a pinned-target extra so it's visible on the map
+  // alongside the line.
+  const all = DATA.map(f => {
+    const r = featureClosestForMode(pin, f);
+    return r ? { ...r, f } : null;
+  }).filter(Boolean);
   const within = all
     .filter(x => !x.inside && x.dist <= MAX_PROXIMITY_M)
     .sort((a,b) => a.dist - b.dist);
@@ -991,16 +992,13 @@ function pinPopupHTML(pin){
   // Two sections: features the pin is INSIDE get a short contextual list (no
   // distance — distance to a property you're standing on isn't interesting).
   // Features OUTSIDE the pin are ranked by distance (in the current mode —
-  // edge or marker), with clickable comparison lines. Both sections respect
-  // the left sidebar's agency filter, so unchecking an agency hides it from
-  // the popup too.
-  const all = DATA
-    .filter(f => active.has(f.properties.eier))
-    .map(f => {
-      const r = featureClosestForMode(pin, f);
-      return r ? { ...r, f } : null;
-    })
-    .filter(Boolean);
+  // edge or marker), with clickable comparison lines.
+  // Both sections ignore the left-sidebar agency filter — proximity is a
+  // property-wide question, not a map-view filter.
+  const all = DATA.map(f => {
+    const r = featureClosestForMode(pin, f);
+    return r ? { ...r, f } : null;
+  }).filter(Boolean);
   const inside  = all.filter(x => x.inside).slice(0, 5);
   const { buildings, tomter } = outsideRanked(pin);
 
