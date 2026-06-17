@@ -686,6 +686,12 @@ function renderPinnedTargetOverlay(){
       seen.add(ei);
       const f = _findFeature(ei);
       if (!f) continue;
+      // Skip if the main map layer is already showing this feature — i.e.
+      // we're in Punkter mode AND the feature's agency is filtered in.
+      // The overlay's job is to fill the gap when the main layer can't
+      // (heat modes, hidden agencies).
+      const inMainLayer = state.mode === 'clusters' && active.has(f.properties.eier);
+      if (inMainLayer) continue;
       const c = colorOf(f.properties.eier);
       const a = featureAnchor(f);
       // Always render a marker at the feature's anchor — that's the "unit"
