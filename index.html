@@ -148,6 +148,14 @@
   .seg button{flex:1;background:var(--panel-2);color:var(--muted);border:0;padding:9px 4px;
     font:600 12px Inter;cursor:pointer;transition:background .12s,color .12s}
   .seg button.on{background:var(--ink);color:var(--ground)}
+  /* compact bydel-rank rows */
+  .b-row{display:flex;align-items:center;gap:8px;padding:3px 0;font-size:12px}
+  .b-row .b-nm{flex:1;color:var(--ink);line-height:1.2;font-variant-numeric:tabular-nums}
+  .b-row .b-ct{color:var(--muted);font-variant-numeric:tabular-nums}
+  .b-row .b-bar{flex-basis:100%;height:3px;border-radius:2px;background:var(--line);overflow:hidden;margin-top:3px;flex:none;width:100%}
+  .b-row .b-bar > i{display:block;height:100%;background:var(--c-eby);border-radius:2px}
+  .b-row{flex-wrap:wrap}
+  #bydel-stats-empty{color:var(--muted);font-size:11.5px;line-height:1.4}
   .label-row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}
   .label-row .label{margin-bottom:0}
   .info-btn{appearance:none;background:transparent;border:1px solid var(--line);color:var(--muted);
@@ -220,6 +228,11 @@
       <section>
         <div class="label">Bydel</div>
         <select id="bydel"><option value="">Alle bydeler</option></select>
+      </section>
+
+      <section id="bydel-stats-section">
+        <div class="label">Topp bydeler</div>
+        <div id="bydel-stats"></div>
       </section>
     </div>
     <footer>
@@ -329,12 +342,22 @@ let clusterLayer = L.markerClusterGroup({
   iconCreateFunction(cluster){
     const n = cluster.getChildCount();
     const s = n<10?30:n<100?38:n<1000?46:54;
-    // Solid teal fill + dark text + halo. The halo + inner ring + glow are
-    // CSS-var driven, so they invert on light mode (dark halo) and stay
-    // legible on satellite imagery.
+    // Tint the bubble after the children: if every marker in the cluster
+    // belongs to the same owning agency, use that agency's colour; if mixed,
+    // fall back to neutral teal so the cluster doesn't mis-signal one agency.
+    const eiers = new Set();
+    for (const m of cluster.getAllChildMarkers()) {
+      const e = m._kombo && m._kombo.eier;
+      if (e) eiers.add(e);
+      if (eiers.size > 1) break;       // short-circuit: mixed
+    }
+    // Single-owner cluster: take that owner's colour. Mixed cluster: neutral
+    // grey — using ANY palette colour for "mixed" would falsely signal that
+    // one specific agency dominates.
+    const bg = (eiers.size === 1) ? colorOf([...eiers][0]) : '#8a979e';
     return L.divIcon({html:`<div style="display:flex;align-items:center;justify-content:center;
       width:${s}px;height:${s}px;border-radius:50%;
-      background:#5fb6b0;color:#0e1417;
+      background:${bg};color:#0e1417;
       border:2px solid var(--halo-soft);
       box-shadow:0 0 0 1px var(--inner-ring), 0 2px 6px var(--halo-glow);
       font:700 12px Inter">${n}</div>`,
@@ -418,11 +441,14 @@ function render(){
   }
 
   if(state.mode==='clusters'){
+    // Tag each marker with its owning agency (._kombo.eier) so the cluster's
+    // iconCreateFunction can colour the bubble after the children.
+    const tag = (m, eier) => { m._kombo = { eier }; return m; };
     const markers = [];
     // Pure-point features → marker at the point.
     for (const f of points) {
       const p = f.properties, c = f.geometry.coordinates;
-      markers.push(L.marker([c[1],c[0]],{icon:dot(colorOf(p.eier))}).bindPopup(popup(p,c)));
+      markers.push(tag(L.marker([c[1],c[0]],{icon:dot(colorOf(p.eier))}).bindPopup(popup(p,c)), p.eier));
     }
     // Polygon features WITH a Geonorge address point → marker at the address
     // on top of the polygon outline. Lets addressed parcels (Boligbygg houses,
@@ -432,7 +458,7 @@ function render(){
       const c = f.properties && f.properties.center;
       if (!c) continue;   // road land / address-less → polygon only, no marker
       const p = f.properties;
-      markers.push(L.marker([c[1],c[0]],{icon:dot(colorOf(p.eier))}).bindPopup(popup(p,c)));
+      markers.push(tag(L.marker([c[1],c[0]],{icon:dot(colorOf(p.eier))}).bindPopup(popup(p,c)), p.eier));
     }
     clusterLayer.addLayers(markers);
     if(!map.hasLayer(clusterLayer)) map.addLayer(clusterLayer);
@@ -452,6 +478,7 @@ function render(){
       gradient:{0.2:'#173a4a',0.45:'#2d8f86',0.7:'#e0a54a',1:'#d4664a'}}).addTo(map);
   }
   updateStats(rows);
+  renderBydelStats();
 }
 
 function updateStats(rows){
@@ -508,6 +535,45 @@ function buildBydel(){
     }
   };
 }
+
+// Per-bydel counts based on the *owner* filter (intentionally ignoring the
+// bydel filter, so every option in the dropdown keeps a non-zero label when
+// it's relevant). Updates the dropdown labels in place AND renders the
+// "Topp bydeler" ranking panel.
+function renderBydelStats(){
+  if(!DATA.length) return;
+  // Inline equivalent of filtered() but without the bydel cut.
+  const base = DATA.filter(f => active.has(f.properties.eier));
+  const counts = {};
+  for (const f of base) {
+    const b = f.properties.bydel;
+    if (b) counts[b] = (counts[b]||0) + 1;
+  }
+
+  // Dropdown labels
+  for (const opt of bydelSel.options) {
+    if (!opt.value) { opt.textContent = `Alle bydeler (${fmt(base.length)})`; continue; }
+    const n = counts[opt.value] || 0;
+    opt.textContent = `${opt.value} (${fmt(n)})`;
+  }
+
+  // Stats panel — top 10 bydeler by count
+  const ranked = Object.entries(counts).sort((a,b) => b[1]-a[1]).slice(0,10);
+  const stats = document.getElementById('bydel-stats');
+  if (!ranked.length) {
+    stats.innerHTML = `<div id="bydel-stats-empty">Ingen treff i utvalget.</div>`;
+    return;
+  }
+  const max = ranked[0][1] || 1;
+  stats.innerHTML = ranked.map(([name, n]) =>
+    `<div class="b-row">
+       <span class="b-nm">${name}</span>
+       <span class="b-ct">${fmt(n)}</span>
+       <div class="b-bar"><i style="width:${(n/max)*100}%"></i></div>
+     </div>`).join('');
+}
+
+const bydelSel = document.getElementById('bydel');
 
 // Sidebar collapse/expand — apply saved state and wire the toggle.
 const railToggle = document.getElementById('rail-toggle');
