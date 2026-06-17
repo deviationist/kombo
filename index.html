@@ -253,15 +253,27 @@
   .pin-pop .prox-list::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px}
   .pin-pop .prox-hdr{margin-top:6px;margin-bottom:1px}
   .pin-pop .prox-hdr:first-child{margin-top:0}
-  /* "Andre enheter på samme adresse" — small co-located-unit list inside the
-     kommune popup. Each row is clickable to swap the popup to that sibling. */
-  .popup-sibs{margin-top:8px;font-size:11.5px;line-height:1.35}
-  .popup-sibs-list{max-height:150px;overflow-y:auto;margin:0 -6px;padding:0 6px}
+  /* Detail-mode nav strip: Back + prev/next when there are sibling units. */
+  .popup-nav{display:flex;align-items:center;gap:6px;
+    margin:-2px 0 6px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+  .popup-nav .nav-spacer{flex:1}
+  .popup-nav .nav-btn{appearance:none;background:var(--panel-2);
+    border:1px solid var(--line);color:var(--ink);width:26px;height:24px;
+    border-radius:4px;cursor:pointer;font:600 14px/1 Inter;padding:0;
+    display:inline-flex;align-items:center;justify-content:center;
+    transition:background .12s,border-color .12s,color .12s}
+  .popup-nav .nav-btn:hover:not([disabled]){background:var(--panel);border-color:var(--muted)}
+  .popup-nav .nav-btn[disabled]{opacity:.35;cursor:default}
+  .popup-nav .nav-pos{color:var(--muted);font:500 11px/1 Inter;font-variant-numeric:tabular-nums}
+  /* List-mode unit rows (Casparis gate 4 case — clickable list of all
+     eierseksjoner at the address). */
+  .popup-sibs-list{max-height:200px;overflow-y:auto;margin:0 -6px;padding:0 6px}
   .popup-sibs-list::-webkit-scrollbar{width:6px}
   .popup-sibs-list::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px}
-  .sib-row{display:flex;gap:6px;align-items:center;padding:3px 6px;margin:0 -6px;
+  .sib-row{display:flex;gap:6px;align-items:center;padding:4px 6px;margin:0 -6px;
     border-top:1px solid var(--line);border-radius:3px;cursor:pointer;
     transition:background .08s}
+  .sib-row:first-child{border-top:0}
   .sib-row:hover{background:var(--panel)}
   .sib-row .dot{width:8px;height:8px;border-radius:50%;flex:none}
   .sib-row .ttl{flex:1;color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -660,7 +672,49 @@ function featureTitle(p){
   return p.eiendom || '(uten navn)';
 }
 
-function popup(p, anchor){
+// Build a popup for a kommune feature in one of two modes:
+//   'list'   — many units share this address; show the building summary +
+//              a clickable list of all units. First-click default.
+//   'detail' — single unit drill-in; standard fields + "Back to list" +
+//              prev/next arrows when there are sibling units.
+//   'auto'   — pick list if siblings.length > 1, else detail.
+function popup(p, anchor, mode = 'auto'){
+  const siblings = (DATA && p.adresse)
+    ? DATA.filter(f => f.properties.adresse === p.adresse)
+          .sort((a,b) => a.properties.eiendom.localeCompare(b.properties.eiendom))
+    : [];
+  if (mode === 'auto') mode = siblings.length > 1 ? 'list' : 'detail';
+  if (mode === 'list' && siblings.length > 1) return listPopupHTML(p, siblings);
+  return detailPopupHTML(p, anchor, siblings);
+}
+
+function listPopupHTML(p, siblings){
+  const post = (p.postnummer && p.poststed) ? `${p.postnummer} ${p.poststed}` : '';
+  const rows = siblings.map(s => {
+    const sp = s.properties;
+    const sc = colorOf(sp.eier);
+    const m = parseMatrikkel(sp.eiendom);
+    const sub = [];
+    if (m && +m.snr > 0) sub.push(`seksjon ${+m.snr}`);
+    else if (m && +m.fnr > 0) sub.push(`feste ${+m.fnr}`);
+    else if (m) sub.push(`bnr ${+m.bnr}`);
+    if (sp.bruksnavn && !GENERIC_BRUKSNAVN.has(sp.bruksnavn.trim())) sub.push(sp.bruksnavn);
+    if (sp.areal != null) sub.push(`${fmt(Math.round(sp.areal))} m²`);
+    return `<div class="popup-jump sib-row" data-eiendom="${sp.eiendom}" data-mode="detail" title="Klikk for å åpne denne enheten">
+      <span class="dot" style="background:${sc}"></span>
+      <span class="ttl">${sub.join(' · ') || sp.eiendom}</span>
+      <span class="pk">${sp.eier.split(' ')[0]}</span>
+    </div>`;
+  }).join('');
+  return `<b>${(p.adresse || '').trim() || 'Eiendom'}</b>
+    ${post ? `<div class="pk" style="margin-top:2px">${post}</div>` : '<br>'}
+    <span class="pk">Eier</span> ${p.eier}<br>
+    ${p.bydel?`<span class="pk">Bydel</span> ${p.bydel}<br>`:''}
+    <div class="pk" style="margin-top:8px;margin-bottom:2px">${siblings.length} enheter på denne adressen:</div>
+    <div class="popup-sibs-list">${rows}</div>`;
+}
+
+function detailPopupHTML(p, anchor, siblings){
   // Street View link. Google's official Maps URLs API only lets us position
   // Street View by lat/lon (`viewpoint=LAT,LON`), which snaps to the nearest
   // existing panorama and can land you on a neighbouring building. The
@@ -678,31 +732,31 @@ function popup(p, anchor){
   // "0284 OSLO" line under the street address — only when Geonorge gave us
   // both fields. Falls back silently for parcels with no registered address.
   const post = (p.postnummer && p.poststed) ? `${p.postnummer} ${p.poststed}` : '';
-  // Other rows sharing this exact address — eierseksjoner of a building or
-  // co-located parcels. We pre-render the list inside the popup so users
-  // discover them without having to spider-fy clusters or scan the XLSX.
-  // Limit + scroll if there are many.
-  const siblings = (DATA && p.adresse)
-    ? DATA.filter(f => f.properties.eiendom !== p.eiendom
-                   && f.properties.adresse === p.adresse).slice(0, 50)
-    : [];
-  const siblingHtml = siblings.length ? `
-    <div class="popup-sibs">
-      <div class="pk" style="margin-bottom:2px">${siblings.length} andre på samme adresse:</div>
-      <div class="popup-sibs-list">
-        ${siblings.map(s => {
-          const sp = s.properties;
-          const sc = colorOf(sp.eier);
-          const t = featureTitle(sp);
-          return `<div class="sib-row" data-eiendom="${sp.eiendom}" title="Klikk for å vise denne enheten">
-            <span class="dot" style="background:${sc}"></span>
-            <span class="ttl">${sp.eiendom.replace(/^\d+-/, '')}${sp.bruksnavn && !GENERIC_BRUKSNAVN.has(sp.bruksnavn.trim())?` · ${sp.bruksnavn}`:''}</span>
-            <span class="pk">${sp.eier.split(' ')[0]}</span>
-          </div>`;
-        }).join('')}
-      </div>
-    </div>` : '';
-  return `<b>${featureTitle(p)}</b>
+  // Nav strip — Back to the list view + step prev/next through siblings.
+  let navHtml = '';
+  if (siblings.length > 1) {
+    const idx = Math.max(0, siblings.findIndex(f => f.properties.eiendom === p.eiendom));
+    const prev = idx > 0 ? siblings[idx - 1] : null;
+    const next = idx < siblings.length - 1 ? siblings[idx + 1] : null;
+    const backEi = siblings[0].properties.eiendom;
+    navHtml = `<div class="popup-nav">
+      <button class="popup-jump nav-btn" data-eiendom="${backEi}" data-mode="list" title="Tilbake til oversikt">↩</button>
+      <span class="nav-spacer"></span>
+      <button class="popup-jump nav-btn" data-dir="prev" ${prev ? `data-eiendom="${prev.properties.eiendom}"` : 'disabled'} title="Forrige enhet (←)">←</button>
+      <span class="nav-pos">enhet ${idx+1} av ${siblings.length}</span>
+      <button class="popup-jump nav-btn" data-dir="next" ${next ? `data-eiendom="${next.properties.eiendom}"` : 'disabled'} title="Neste enhet (→)">→</button>
+    </div>`;
+  }
+  // When the row is an eierseksjon or festenummer, append the unit number
+  // to the title so it's obvious WHICH of N units the user is currently
+  // looking at — otherwise all siblings show the identical "Casparis gate 4"
+  // and clicking through the list looks like nothing changed.
+  let title = featureTitle(p);
+  if (mt) {
+    if (+mt.snr > 0) title += ` — seksjon ${+mt.snr}`;
+    else if (+mt.fnr > 0) title += ` — feste ${+mt.fnr}`;
+  }
+  return `${navHtml}<b>${title}</b>
     ${post ? `<div class="pk" style="margin-top:2px">${post}</div>` : '<br>'}
     <span class="pk">Matrikkel</span> ${p.eiendom}<br>
     <span class="pk">Eier</span> ${p.eier}<br>
@@ -713,8 +767,7 @@ function popup(p, anchor){
       ${sv?`<a class="sv-link" href="${sv}" target="_blank" rel="noopener">Street View ↗</a>`:''}
       ${sv && gb?' · ':''}
       ${gb?`<a class="sv-link" href="${gb}" target="_blank" rel="noopener">Grunnboken ↗</a>`:''}
-    </div>
-    ${siblingHtml}`;
+    </div>`;
 }
 
 function filtered(){
@@ -827,15 +880,20 @@ function render(){
       markers.push(tag(L.marker([c[1],c[0]],{icon:dot(colorOf(p.eier))}).bindPopup(popup(p,c)), p.eier));
     }
     // Polygon features WITH a Geonorge address point → marker at the address
-    // on top of the polygon outline. Lets addressed parcels (Boligbygg houses,
-    // Oslobygg schools, …) cluster + carry a popup while the polygon shows
-    // the actual parcel shape underneath. Use polyFeatures (un-deduped) so
-    // every eierseksjon gets its own marker — the cluster bubble counts
-    // them all, and spider-fy still gives a popup per flat.
+    // on top of the polygon outline. Dedupe by (gnr, bnr): 52 eierseksjoner
+    // of one building share a parcel + address, so we drop a single marker
+    // there. The popup's prev/next navigation lets the user step through all
+    // sibling units (matched by `adresse`) without stacking 52 markers'
+    // drop-shadows on the same pixel.
+    const markerSeen = new Set();
     for (const f of polyFeatures) {
       const c = f.properties && f.properties.center;
       if (!c) continue;   // road land / address-less → polygon only, no marker
       const p = f.properties;
+      const m = parseMatrikkel(p.eiendom);
+      const key = m ? `${m.gnr}/${m.bnr}` : p.eiendom;
+      if (markerSeen.has(key)) continue;
+      markerSeen.add(key);
       markers.push(tag(L.marker([c[1],c[0]],{icon:dot(colorOf(p.eier))}).bindPopup(popup(p,c)), p.eier));
     }
     clusterLayer.addLayers(markers);
@@ -1743,21 +1801,35 @@ document.addEventListener('click', e => {
   if (!e.target.closest('#pin-form')) searchSuggest.classList.remove('open');
 });
 
-// Delegated handler for the "Andre enheter på samme adresse" sibling rows
-// inside any open kommune popup. Clicking a row re-opens the popup with
-// the sibling's content (same screen position — siblings share an address).
-document.addEventListener('click', e => {
-  const row = e.target.closest('.sib-row[data-eiendom]');
-  if (!row) return;
-  const f = _findFeature(row.dataset.eiendom);
+// Delegated handler for any element that wants to open a kommune-feature
+// popup by eiendomsstring — the prev/next navigation arrows in the popup,
+// and any future "show this row" link we sprinkle.
+function jumpToFeature(ei, mode = 'auto'){
+  const f = _findFeature(ei);
   if (!f) return;
   const a = featureAnchor(f);
   if (!a) return;
-  map.closePopup();
   L.popup({maxWidth: 320})
     .setLatLng([a[1], a[0]])
-    .setContent(popup(f.properties, a))
-    .openOn(map);
+    .setContent(popup(f.properties, a, mode))
+    .openOn(map);    // openOn closes any existing popup automatically
+}
+document.addEventListener('click', e => {
+  const el = e.target.closest('.popup-jump[data-eiendom]');
+  if (!el || el.hasAttribute('disabled')) return;
+  jumpToFeature(el.dataset.eiendom, el.dataset.mode || 'auto');
+});
+// Keyboard ← / → step through siblings while a popup with the nav strip
+// is open. Doesn't fire while the user is typing into a text field.
+document.addEventListener('keydown', e => {
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+  const tag = e.target.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target.isContentEditable) return;
+  const popupEl = map._popup && map._popup.getElement();
+  if (!popupEl) return;
+  const dir = e.key === 'ArrowLeft' ? 'prev' : 'next';
+  const btn = popupEl.querySelector(`.nav-btn[data-dir="${dir}"][data-eiendom]:not([disabled])`);
+  if (btn) { e.preventDefault(); jumpToFeature(btn.dataset.eiendom); }
 });
 
 // Right-click context menu on the map → "Legg til markør her" → prompt for
