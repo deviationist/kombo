@@ -607,11 +607,10 @@ const OWNERS = [
 const DEFAULT_ACTIVE_OWNERS = ["Boligbygg Oslo KF"];
 const colorOf = k => (OWNERS.find(o=>o.key===k)||{color:"#8a979e"}).color;
 const active = new Set(DEFAULT_ACTIVE_OWNERS);
-// Default base layer follows the OS colour scheme on a fresh visit; a saved
+// Default base layer is the light basemap on a fresh visit; a saved
 // explicit choice (from the layer-control) wins via loadState.
-const _sysLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
 let state = {bydel:"", mode:"clusters",
-             base: _sysLight ? 'light' : 'dark',
+             base: 'light',
              center:[59.913,10.74], zoom:11,
              railCollapsed:false, railRCollapsed:false,
              modeInfoOpen:false, showPolygons:true,
@@ -685,7 +684,7 @@ function urlFromState(){
   p.set('lat', state.center[0].toFixed(5));
   p.set('lon', state.center[1].toFixed(5));
   if (state.mode !== 'clusters')  p.set('v', state.mode);
-  if (state.base !== 'dark')      p.set('base', state.base);
+  if (state.base !== 'light')     p.set('base', state.base);
   if (state.bydel)                p.set('bydel', state.bydel);
   if (state.showPolygons === false) p.set('teig', '0');
   if (state.showUtenbys === true) p.set('utb', '1');
