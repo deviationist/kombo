@@ -363,6 +363,14 @@
       </section>
 
       <section>
+        <div class="label">Avstand måles til</div>
+        <div class="seg" id="dist-mode">
+          <button data-m="edge"   class="on" title="Korteste avstand fra punktet til tomtens grense.">Tomtekant</button>
+          <button data-m="marker"             title="Avstand fra punktet til markøren (adressepunkt eller midtpunkt).">Markør</button>
+        </div>
+      </section>
+
+      <section>
         <div class="label">Punkter (<span id="pin-count">0</span>)</div>
         <div id="pin-list"></div>
       </section>
@@ -406,7 +414,8 @@ let state = {bydel:"", mode:"clusters",
              base: _sysLight ? 'light' : 'dark',
              center:[59.913,10.74], zoom:11,
              railCollapsed:false, railRCollapsed:false,
-             modeInfoOpen:false, showPolygons:true};
+             modeInfoOpen:false, showPolygons:true,
+             distanceMode:'edge'};      // 'edge' (to nearest tomtekant) | 'marker' (to address point)
 let DATA = [];
 
 // ---- localStorage persistence ---------------------------------------------
@@ -428,6 +437,7 @@ function loadState(){
     if(typeof s.railRCollapsed === 'boolean') state.railRCollapsed = s.railRCollapsed;
     if(typeof s.modeInfoOpen === 'boolean') state.modeInfoOpen = s.modeInfoOpen;
     if(typeof s.showPolygons === 'boolean') state.showPolygons = s.showPolygons;
+    if(s.distanceMode === 'edge' || s.distanceMode === 'marker') state.distanceMode = s.distanceMode;
     if(Array.isArray(s.active)){
       active.clear();
       s.active.filter(k => OWNERS.some(o => o.key===k)).forEach(k => active.add(k));
@@ -445,6 +455,7 @@ function saveState(){
       railCollapsed: state.railCollapsed, railRCollapsed: state.railRCollapsed,
       modeInfoOpen: state.modeInfoOpen,
       showPolygons: state.showPolygons,
+      distanceMode: state.distanceMode,
     }));
   }catch(e){ /* private mode etc. */ }
 }
@@ -835,11 +846,12 @@ function userPinIcon(){
 function pinPopupHTML(pin){
   // Two sections: features the pin is INSIDE get a short contextual list (no
   // distance — distance to a property you're standing on isn't interesting).
-  // Features OUTSIDE the pin are ranked by edge-distance, top 5 — those are
-  // the meaningful "nearest neighbours" with clickable comparison lines.
-  const all = DATA.map(f => ({
-    ...geometryClosest(pin.lat, pin.lon, f.geometry), f
-  }));
+  // Features OUTSIDE the pin are ranked by distance (in the current mode —
+  // edge or marker), top 5, with clickable comparison lines.
+  const all = DATA.map(f => {
+    const r = featureClosestForMode(pin, f);
+    return r ? { ...r, f } : null;
+  }).filter(Boolean);
   const inside  = all.filter(x => x.inside).slice(0, 5);
   const outside = all.filter(x => !x.inside).sort((a,b) => a.dist - b.dist).slice(0, 5);
 
@@ -855,11 +867,11 @@ function pinPopupHTML(pin){
     </div>`;
   }).join('');
 
-  const proxRows = outside.map(({dist, closest, f}) => {
+  const proxRows = outside.map(({dist, f}) => {
     const p = f.properties;
     const c = colorOf(p.eier);
     const distLbl = dist < 1000 ? `${Math.round(dist)} m` : `${(dist/1000).toFixed(1)} km`;
-    return `<div class="prox-row" data-closest="${closest[0]},${closest[1]}" title="Klikk for å feste linjen til nærmeste tomtekant">
+    return `<div class="prox-row" data-eiendom="${p.eiendom}" title="Klikk for å feste linjen">
       <span style="width:8px;height:8px;border-radius:50%;background:${c};flex:none;margin-top:5px"></span>
       <span style="flex:1;min-width:0">
         <span style="color:var(--ink)">${featureTitle(p)}</span><br>
@@ -979,8 +991,6 @@ const HOVER_COLOR = '#d348a0';  // matches --c-pin (Leaflet polyline can't read 
 let hoverLine = null;
 function showHoverLine(pin, closest){
   hideHoverLine();
-  // No hover-line on a row that's already pinned — avoids double-drawing.
-  if (pinnedLines.has(closest.join(','))) return;
   hoverLine = L.polyline(
     [[pin.lat, pin.lon], [closest[1], closest[0]]],
     {color: HOVER_COLOR, weight: 2, dashArray: '4 5', opacity: 0.85, interactive: false}
@@ -990,31 +1000,54 @@ function hideHoverLine(){
   if (hoverLine) { map.removeLayer(hoverLine); hoverLine = null; }
 }
 
-// Pinned (click-to-keep) lines — per pin, so they survive popup close and
-// localStorage reload, and so deleting a pin drops just that pin's lines.
-// Each pin owns an L.LayerGroup. pinnedClosests on the pin (persisted) is
-// the source of truth; the Maps below are the live Leaflet references.
+// Per-feature closest point + distance, honouring the current
+// state.distanceMode. Used both for the popup rows and for the pinned-line
+// endpoint so a global mode flip moves everything together.
+function featureClosestForMode(pin, f){
+  if (state.distanceMode === 'marker') {
+    const a = featureAnchor(f);
+    if (!a) return null;
+    const d = L.latLng(pin.lat, pin.lon).distanceTo([a[1], a[0]]);
+    // "inside" stays meaningful: a polygon containing the pin still gets the
+    // inside flag, but distance is now measured to the marker.
+    let inside = false;
+    if (f.geometry.type !== 'Point') {
+      const r = geometryClosest(pin.lat, pin.lon, f.geometry);
+      inside = r.inside;
+    }
+    return { dist: d, closest: a, inside };
+  }
+  return geometryClosest(pin.lat, pin.lon, f.geometry);
+}
+
+// Pinned (click-to-keep) lines — per pin, identified by the comparison
+// feature's matrikkelnummer ("eiendom") so the line stays anchored to the
+// right feature even when the distance mode flips (or the user re-opens
+// the popup later). Source of truth: pin.pinnedFeatures (persisted).
 const pinLineGroups = new Map(); // pinId → L.LayerGroup
-const pinLineByKey  = new Map(); // pinId → Map<closestKey, L.Polyline>
+const pinLineByEi   = new Map(); // pinId → Map<eiendom, L.Polyline>
 function _ensureGroup(pinId){
   if (!pinLineGroups.has(pinId)) {
     pinLineGroups.set(pinId, L.layerGroup().addTo(map));
-    pinLineByKey.set(pinId, new Map());
+    pinLineByEi.set(pinId, new Map());
   }
   return pinLineGroups.get(pinId);
 }
-function addPinnedLine(pin, closest){
-  // Direct add — used both by toggle and by the boot-time restore. Does not
-  // persist; callers persist after their batch of changes.
-  const key = closest.join(',');
-  const byKey = pinLineByKey.get(pin.id) || (_ensureGroup(pin.id), pinLineByKey.get(pin.id));
-  if (byKey.has(key)) return false;
-  const distM = L.latLng(pin.lat, pin.lon).distanceTo([closest[1], closest[0]]);
+function _findFeature(eiendom){
+  return DATA.find(f => f.properties.eiendom === eiendom);
+}
+
+function addPinnedLine(pin, feature){
+  _ensureGroup(pin.id);
+  const byEi = pinLineByEi.get(pin.id);
+  const eiendom = feature.properties.eiendom;
+  if (byEi.has(eiendom)) return false;
+  const r = featureClosestForMode(pin, feature);
+  if (!r) return false;
+  const distM = r.dist;
   const label = distM < 1 ? '0 m' : (distM < 1000 ? `${Math.round(distM)} m` : `${(distM/1000).toFixed(1)} km`);
-  // interactive: true so the line and its label both receive clicks → open
-  // the owning pin's popup (same UX as clicking the marker itself).
   const line = L.polyline(
-    [[pin.lat, pin.lon], [closest[1], closest[0]]],
+    [[pin.lat, pin.lon], [r.closest[1], r.closest[0]]],
     {color: HOVER_COLOR, weight: 3, opacity: 0.95, bubblingMouseEvents: false}
   ).addTo(pinLineGroups.get(pin.id));
   line.bindTooltip(label, {permanent: true, direction: 'center', className: 'pin-line-label'});
@@ -1022,26 +1055,25 @@ function addPinnedLine(pin, closest){
     const m = pinMarkers.get(pin.id);
     if (m) m.openPopup();
   });
-  byKey.set(key, line);
+  byEi.set(eiendom, line);
   return true;
 }
-function removePinnedLine(pin, closest){
-  const key = closest.join(',');
-  const byKey = pinLineByKey.get(pin.id);
-  if (!byKey || !byKey.has(key)) return false;
-  pinLineGroups.get(pin.id).removeLayer(byKey.get(key));
-  byKey.delete(key);
+function removePinnedLine(pin, eiendom){
+  const byEi = pinLineByEi.get(pin.id);
+  if (!byEi || !byEi.has(eiendom)) return false;
+  pinLineGroups.get(pin.id).removeLayer(byEi.get(eiendom));
+  byEi.delete(eiendom);
   return true;
 }
-function togglePinnedLine(pin, closest){
-  const key = closest.join(',');
-  const isPinned = pinLineByKey.get(pin.id)?.has(key);
+function togglePinnedLine(pin, feature){
+  const eiendom = feature.properties.eiendom;
+  const isPinned = pinLineByEi.get(pin.id)?.has(eiendom);
   if (isPinned) {
-    removePinnedLine(pin, closest);
-    pin.pinnedClosests = (pin.pinnedClosests || []).filter(c => c.join(',') !== key);
+    removePinnedLine(pin, eiendom);
+    pin.pinnedFeatures = (pin.pinnedFeatures || []).filter(e => e !== eiendom);
   } else {
-    addPinnedLine(pin, closest);
-    pin.pinnedClosests = [...(pin.pinnedClosests || []), closest];
+    addPinnedLine(pin, feature);
+    pin.pinnedFeatures = [...(pin.pinnedFeatures || []), eiendom];
   }
   savePins();
   return !isPinned;
@@ -1050,7 +1082,18 @@ function clearPinLines(pinId){
   const g = pinLineGroups.get(pinId);
   if (g) map.removeLayer(g);
   pinLineGroups.delete(pinId);
-  pinLineByKey.delete(pinId);
+  pinLineByEi.delete(pinId);
+}
+// Tear down + rebuild ALL pins' lines — used when distanceMode changes so
+// every line's endpoint reflects the new metric.
+function rebuildAllPinLines(){
+  for (const pin of userPins) {
+    clearPinLines(pin.id);
+    (pin.pinnedFeatures || []).forEach(ei => {
+      const f = _findFeature(ei);
+      if (f) addPinnedLine(pin, f);
+    });
+  }
 }
 
 // Highlight the sidebar row matching the currently-active marker.
@@ -1071,25 +1114,29 @@ function renderPinMarker(pin){
     if (!root) return;
     // Highlight the sidebar row matching this pin.
     highlightSidebarPin(pin.id);
-    // For each proximity row: hover draws a dashed line to the closest point
-    // on the comparison feature; clicking pins a solid labelled line that
-    // survives mouse-out, popup close, AND reload. Click again to unpin.
-    const pinnedKeys = new Set((pin.pinnedClosests || []).map(c => c.join(',')));
+    // For each proximity row: hover draws a dashed line to the row's feature
+    // (closest point computed in the current distance mode); clicking pins a
+    // solid labelled line that survives mouse-out, popup close, AND reload.
+    // Click again to unpin.
+    const pinnedEi = new Set(pin.pinnedFeatures || []);
     root.querySelectorAll('.prox-row').forEach(row => {
-      const closest = row.dataset.closest.split(',').map(parseFloat);
-      // Restore visual pin state for rows currently in pin.pinnedClosests.
-      const startPinned = pinnedKeys.has(closest.join(','));
-      if (startPinned) {
+      const eiendom = row.dataset.eiendom;
+      const feature = _findFeature(eiendom);
+      if (!feature) return;
+      const rowClosest = () => featureClosestForMode(pin, feature)?.closest;
+      if (pinnedEi.has(eiendom)) {
         row.classList.add('pinned');
         row.title = 'Klikk for å fjerne linjen';
       }
-      row.addEventListener('mouseenter', () => showHoverLine(pin, closest));
+      row.addEventListener('mouseenter', () => {
+        const c = rowClosest(); if (c) showHoverLine(pin, c);
+      });
       row.addEventListener('mouseleave', hideHoverLine);
       row.addEventListener('click', () => {
-        const isPinned = togglePinnedLine(pin, closest);
+        const isPinned = togglePinnedLine(pin, feature);
         row.classList.toggle('pinned', isPinned);
         row.title = isPinned ? 'Klikk for å fjerne linjen' : 'Klikk for å feste linjen';
-        if (isPinned) hideHoverLine();   // pinned line takes over
+        if (isPinned) hideHoverLine();
       });
     });
     // In-popup delete button.
@@ -1448,6 +1495,31 @@ map.on('click movestart zoomstart', hideCtxMenu);
 document.addEventListener('mousedown', e => {
   if (!e.target.closest('#ctx-menu')) hideCtxMenu();
 });
+// Distance-mode toggle (Tomtekant ↔ Markør). Affects the popup's distance
+// label, the proximity ranking, the hover-line, and every pinned-line + label.
+const distModeEl = document.getElementById('dist-mode');
+function applyDistMode(){
+  distModeEl.querySelectorAll('button').forEach(b =>
+    b.classList.toggle('on', b.dataset.m === state.distanceMode));
+}
+applyDistMode();
+distModeEl.addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  state.distanceMode = b.dataset.m;
+  applyDistMode();
+  saveState();
+  rebuildAllPinLines();
+  // Refresh any open popup so distance labels + row data swap immediately.
+  for (const m of pinMarkers.values()) {
+    if (m.isPopupOpen()) {
+      const id = [...pinMarkers].find(([, mm]) => mm === m)?.[0];
+      const pin = userPins.find(p => p.id === id);
+      if (pin) m.setPopupContent(pinPopupHTML(pin));
+    }
+  }
+});
+
 ctxMenu.querySelector('[data-action="add-here"]').addEventListener('click', () => {
   const ll = ctxLatLng;
   hideCtxMenu();
@@ -1513,10 +1585,22 @@ async function boot(){
   // proximity popup has features to rank against. Also restore any
   // previously pinned comparison lines + the Teig polygon per pin.
   loadPins();
+  // Migration: older pins stored pinnedClosests (lon,lat). The new shape is
+  // pinnedFeatures (eiendomsstring). Drop the legacy field — re-pinning is
+  // a single click and the data was mode-specific anyway.
+  userPins.forEach(p => {
+    if (Array.isArray(p.pinnedClosests) && !Array.isArray(p.pinnedFeatures)) {
+      delete p.pinnedClosests;
+      p.pinnedFeatures = [];
+    }
+  });
   userPins.forEach(p => {
     renderPinMarker(p);
     if (p.teig) renderPinTeig(p);
-    (p.pinnedClosests || []).forEach(closest => addPinnedLine(p, closest));
+    (p.pinnedFeatures || []).forEach(ei => {
+      const f = _findFeature(ei);
+      if (f) addPinnedLine(p, f);
+    });
   });
   renderPinList();
 }
