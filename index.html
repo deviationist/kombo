@@ -226,8 +226,18 @@
   /* Sidebar pin row highlight when its map-marker popup is open. */
   .pin.active{border-color:var(--c-pin);background:var(--panel)}
   /* Pin popup — proximity rows + delete + the resolved matrikkel line. */
-  .pin-pop .prox-row{display:flex;gap:6px;padding:4px 0;border-top:1px solid var(--line);cursor:default;border-radius:3px;transition:background .08s}
+  .pin-pop .prox-row{display:flex;gap:6px;padding:4px 6px;margin:0 -6px;border-top:1px solid var(--line);cursor:pointer;border-radius:3px;transition:background .08s,box-shadow .08s}
   .pin-pop .prox-row:hover{background:var(--panel)}
+  .pin-pop .prox-row.pinned{background:var(--panel);box-shadow:inset 3px 0 0 var(--c-pin)}
+  /* Distance label that sits at the centre of each pinned comparison line. */
+  .leaflet-tooltip.pin-line-label{
+    background:var(--c-pin);color:#ffffff;
+    border:0;border-radius:5px;padding:2px 7px;
+    font:600 11px Inter;letter-spacing:.01em;
+    box-shadow:0 1px 4px rgba(0,0,0,.35);
+    font-variant-numeric:tabular-nums
+  }
+  .leaflet-tooltip.pin-line-label::before{display:none}
   .pin-pop .meta{margin-top:4px;color:var(--muted);font-size:11px}
   .pin-pop .pop-del{display:inline-block;margin-top:8px;color:var(--c-bolig);font-size:11.5px;font-weight:600;text-decoration:none;cursor:pointer;border:0;background:transparent;padding:0;font-family:Inter}
   .pin-pop .pop-del:hover{text-decoration:underline}
@@ -769,20 +779,20 @@ function userPinIcon(){
 }
 
 function pinPopupHTML(pin){
-  // 5 nearest kommune features by distance from the pin to each feature's
-  // anchor (Geonorge address point if present, else first polygon vertex).
-  const here = L.latLng(pin.lat, pin.lon);
+  // 5 nearest kommune features by *true* point-to-polygon distance — for
+  // polygons that's the minimum distance to any edge segment (0 if inside);
+  // for points, the geodesic distance to the point.
   const ranked = DATA.map(f => {
-    const a = featureAnchor(f); if (!a) return null;
-    return { d: here.distanceTo([a[1], a[0]]), a, f };
-  }).filter(Boolean).sort((x,y) => x.d - y.d).slice(0, 5);
+    const r = geometryClosest(pin.lat, pin.lon, f.geometry);
+    return { d: r.dist, closest: r.closest, f };
+  }).sort((x,y) => x.d - y.d).slice(0, 5);
 
-  const rows = ranked.map(({d, a, f}) => {
+  const rows = ranked.map(({d, closest, f}) => {
     const p = f.properties;
     const c = colorOf(p.eier);
-    const dist = d < 1000 ? `${Math.round(d)} m` : `${(d/1000).toFixed(1)} km`;
+    const dist = d < 1 ? 'innenfor' : (d < 1000 ? `${Math.round(d)} m` : `${(d/1000).toFixed(1)} km`);
     const title = p.adresse || p.bruksnavn || p.eiendom;
-    return `<div class="prox-row" data-anchor="${a[0]},${a[1]}">
+    return `<div class="prox-row" data-closest="${closest[0]},${closest[1]}">
       <span style="width:8px;height:8px;border-radius:50%;background:${c};flex:none;margin-top:5px"></span>
       <span style="flex:1;min-width:0">
         <span style="color:var(--ink)">${title}</span><br>
@@ -811,19 +821,148 @@ function pinPopupHTML(pin){
   </div>`;
 }
 
-// Hover-line from pin to a proximity row's feature. Single shared polyline —
-// re-drawn each hover, removed on mouseleave or popup close.
+// =========================================================================
+// Geometry helpers — true distance from a point to a Polygon / MultiPolygon
+// =========================================================================
+// Project lat/lon into a small "metres-from-pin" frame so we can do plain
+// Euclidean math. Accurate enough at city scale (< a few km).
+
+function pointInRing(p, ring){
+  // Standard ray-cast in 2D.
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0], yi = ring[i][1];
+    const xj = ring[j][0], yj = ring[j][1];
+    if (((yi > p[1]) !== (yj > p[1])) &&
+        (p[0] < (xj - xi) * (p[1] - yi) / ((yj - yi) || 1e-12) + xi)) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function segmentClosest(p, a, b){
+  // Closest point on segment AB to P, plus distance from P to that point.
+  const dx = b[0] - a[0], dy = b[1] - a[1];
+  const len2 = dx*dx + dy*dy;
+  let t = 0;
+  if (len2 > 1e-12) {
+    t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len2;
+    t = Math.max(0, Math.min(1, t));
+  }
+  const cx = a[0] + t*dx, cy = a[1] + t*dy;
+  const ddx = p[0] - cx, ddy = p[1] - cy;
+  return { d: Math.sqrt(ddx*ddx + ddy*ddy), c: [cx, cy] };
+}
+
+// Returns { dist (m), closest (lon,lat) } from the (lat, lon) point to the
+// nearest point on the geometry boundary. Inside the polygon ⇒ dist = 0,
+// closest = the query point itself.
+function geometryClosest(lat, lon, geom){
+  if (geom.type === 'Point') {
+    const [glon, glat] = geom.coordinates;
+    return { dist: L.latLng(lat, lon).distanceTo([glat, glon]), closest: [glon, glat] };
+  }
+  const cosLat = Math.cos(lat * Math.PI / 180);
+  const mPerDegLat = 111320;
+  const mPerDegLon = 111320 * cosLat;
+  const toLocal   = ([lng, la]) => [(lng - lon) * mPerDegLon, (la - lat) * mPerDegLat];
+  const fromLocal = ([x, y])    => [lon + x / mPerDegLon, lat + y / mPerDegLat];
+
+  const polys = geom.type === 'Polygon' ? [geom.coordinates] : geom.coordinates;
+  let minD = Infinity, closest = null;
+  for (const poly of polys) {
+    const localRings = poly.map(ring => ring.map(toLocal));
+    // Inside the outer ring AND not in any hole ⇒ point is inside the polygon.
+    if (pointInRing([0,0], localRings[0]) &&
+        !localRings.slice(1).some(h => pointInRing([0,0], h))) {
+      return { dist: 0, closest: [lon, lat] };
+    }
+    for (const ring of localRings) {
+      for (let i = 0; i < ring.length - 1; i++) {
+        const { d, c } = segmentClosest([0,0], ring[i], ring[i+1]);
+        if (d < minD) { minD = d; closest = fromLocal(c); }
+      }
+    }
+  }
+  return { dist: minD, closest: closest || [lon, lat] };
+}
+
+// =========================================================================
+// Lines from the user-pin to a comparison feature
+// =========================================================================
+// Hover-line: transient, dashed, single. Pinned-lines: persistent, solid,
+// many, cleared on popup close.
 const HOVER_COLOR = '#d348a0';  // matches --c-pin (Leaflet polyline can't read CSS vars)
 let hoverLine = null;
-function showHoverLine(pin, anchor){
+function showHoverLine(pin, closest){
   hideHoverLine();
+  // No hover-line on a row that's already pinned — avoids double-drawing.
+  if (pinnedLines.has(closest.join(','))) return;
   hoverLine = L.polyline(
-    [[pin.lat, pin.lon], [anchor[1], anchor[0]]],
-    {color: HOVER_COLOR, weight: 2, dashArray: '4 5', opacity: 0.9, interactive: false}
+    [[pin.lat, pin.lon], [closest[1], closest[0]]],
+    {color: HOVER_COLOR, weight: 2, dashArray: '4 5', opacity: 0.85, interactive: false}
   ).addTo(map);
 }
 function hideHoverLine(){
   if (hoverLine) { map.removeLayer(hoverLine); hoverLine = null; }
+}
+
+// Pinned (click-to-keep) lines — per pin, so they survive popup close and
+// localStorage reload, and so deleting a pin drops just that pin's lines.
+// Each pin owns an L.LayerGroup. pinnedClosests on the pin (persisted) is
+// the source of truth; the Maps below are the live Leaflet references.
+const pinLineGroups = new Map(); // pinId → L.LayerGroup
+const pinLineByKey  = new Map(); // pinId → Map<closestKey, L.Polyline>
+function _ensureGroup(pinId){
+  if (!pinLineGroups.has(pinId)) {
+    pinLineGroups.set(pinId, L.layerGroup().addTo(map));
+    pinLineByKey.set(pinId, new Map());
+  }
+  return pinLineGroups.get(pinId);
+}
+function addPinnedLine(pin, closest){
+  // Direct add — used both by toggle and by the boot-time restore. Does not
+  // persist; callers persist after their batch of changes.
+  const key = closest.join(',');
+  const byKey = pinLineByKey.get(pin.id) || (_ensureGroup(pin.id), pinLineByKey.get(pin.id));
+  if (byKey.has(key)) return false;
+  const distM = L.latLng(pin.lat, pin.lon).distanceTo([closest[1], closest[0]]);
+  const label = distM < 1 ? '0 m' : (distM < 1000 ? `${Math.round(distM)} m` : `${(distM/1000).toFixed(1)} km`);
+  const line = L.polyline(
+    [[pin.lat, pin.lon], [closest[1], closest[0]]],
+    {color: HOVER_COLOR, weight: 3, opacity: 0.95, interactive: false}
+  ).addTo(pinLineGroups.get(pin.id));
+  line.bindTooltip(label, {permanent: true, direction: 'center', className: 'pin-line-label'});
+  byKey.set(key, line);
+  return true;
+}
+function removePinnedLine(pin, closest){
+  const key = closest.join(',');
+  const byKey = pinLineByKey.get(pin.id);
+  if (!byKey || !byKey.has(key)) return false;
+  pinLineGroups.get(pin.id).removeLayer(byKey.get(key));
+  byKey.delete(key);
+  return true;
+}
+function togglePinnedLine(pin, closest){
+  const key = closest.join(',');
+  const isPinned = pinLineByKey.get(pin.id)?.has(key);
+  if (isPinned) {
+    removePinnedLine(pin, closest);
+    pin.pinnedClosests = (pin.pinnedClosests || []).filter(c => c.join(',') !== key);
+  } else {
+    addPinnedLine(pin, closest);
+    pin.pinnedClosests = [...(pin.pinnedClosests || []), closest];
+  }
+  savePins();
+  return !isPinned;
+}
+function clearPinLines(pinId){
+  const g = pinLineGroups.get(pinId);
+  if (g) map.removeLayer(g);
+  pinLineGroups.delete(pinId);
+  pinLineByKey.delete(pinId);
 }
 
 // Highlight the sidebar row matching the currently-active marker.
@@ -844,13 +983,21 @@ function renderPinMarker(pin){
     if (!root) return;
     // Highlight the sidebar row matching this pin.
     highlightSidebarPin(pin.id);
-    // Hover-line from this pin to each proximity row's feature.
+    // For each proximity row: hover draws a dashed line to the closest point
+    // on the comparison feature; clicking pins a solid labelled line that
+    // survives mouse-out, popup close, AND reload. Click again to unpin.
+    const pinnedKeys = new Set((pin.pinnedClosests || []).map(c => c.join(',')));
     root.querySelectorAll('.prox-row').forEach(row => {
-      row.addEventListener('mouseenter', () => {
-        const [lon, lat] = row.dataset.anchor.split(',').map(parseFloat);
-        showHoverLine(pin, [lon, lat]);
-      });
+      const closest = row.dataset.closest.split(',').map(parseFloat);
+      // Restore visual pin state for rows currently in pin.pinnedClosests.
+      if (pinnedKeys.has(closest.join(','))) row.classList.add('pinned');
+      row.addEventListener('mouseenter', () => showHoverLine(pin, closest));
       row.addEventListener('mouseleave', hideHoverLine);
+      row.addEventListener('click', () => {
+        const isPinned = togglePinnedLine(pin, closest);
+        row.classList.toggle('pinned', isPinned);
+        if (isPinned) hideHoverLine();   // pinned line takes over
+      });
     });
     // In-popup delete button.
     const delBtn = root.querySelector('.pop-del');
@@ -863,6 +1010,8 @@ function renderPinMarker(pin){
   });
   m.on('popupclose', () => {
     hideHoverLine();
+    // Pinned lines persist after the popup closes — user can re-open to
+    // toggle them off, or delete the pin (which drops them all).
     highlightSidebarPin(null);
   });
   m.addTo(userPinLayer);
@@ -913,6 +1062,7 @@ function deletePin(id){
   if (m) { userPinLayer.removeLayer(m); pinMarkers.delete(id); }
   const tl = pinTeigLayers.get(id);
   if (tl) { userTeigLayer.removeLayer(tl); pinTeigLayers.delete(id); }
+  clearPinLines(id);
   savePins();
   renderPinList();
 }
@@ -1200,9 +1350,14 @@ async function boot(){
   buildBydel();
   render();
   // User pins survive reload. Render them after DATA is loaded so the
-  // proximity popup has features to rank against.
+  // proximity popup has features to rank against. Also restore any
+  // previously pinned comparison lines + the Teig polygon per pin.
   loadPins();
-  userPins.forEach(renderPinMarker);
+  userPins.forEach(p => {
+    renderPinMarker(p);
+    if (p.teig) renderPinTeig(p);
+    (p.pinnedClosests || []).forEach(closest => addPinnedLine(p, closest));
+  });
   renderPinList();
 }
 boot();
