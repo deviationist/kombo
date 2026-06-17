@@ -166,6 +166,8 @@
   .info-btn.on{background:var(--ink);color:var(--ground);border-color:var(--ink)}
   .mode-desc{margin-top:8px;color:var(--muted);font-size:11.5px;line-height:1.4;display:none}
   .mode-desc.open{display:block}
+  .toggle-row{display:flex;align-items:center;gap:8px;margin-top:8px;cursor:pointer;color:var(--ink);font-size:12.5px;line-height:1.2;user-select:none}
+  .toggle-row input{margin:0;cursor:pointer;accent-color:var(--c-eby)}
   /* banner */
   #banner{display:none;background:#3a2c12;border:1px solid #6b5220;color:#f0d9a8;
     border-radius:9px;padding:10px 12px;font-size:12px;line-height:1.4;margin-bottom:18px}
@@ -218,6 +220,10 @@
           <button data-m="heatArea"           title="Varmekart vektet på areal — store eiendommer lyser sterkere. Viser hvor kommunen dominerer arealmessig.">Areal-vekt</button>
         </div>
         <div class="mode-desc" id="mode-desc"></div>
+        <label class="toggle-row" title="Vis omrissene av tomtene fra Kartverkets Eiendomskart-Teig WFS.">
+          <input type="checkbox" id="show-polygons" checked>
+          <span>Vis tomtegrenser</span>
+        </label>
       </section>
 
       <section>
@@ -273,7 +279,8 @@ const active = new Set(DEFAULT_ACTIVE_OWNERS);
 const _sysLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
 let state = {bydel:"", mode:"clusters",
              base: _sysLight ? 'light' : 'dark',
-             center:[59.913,10.74], zoom:11, railCollapsed:false, modeInfoOpen:false};
+             center:[59.913,10.74], zoom:11, railCollapsed:false, modeInfoOpen:false,
+             showPolygons:true};
 let DATA = [];
 
 // ---- localStorage persistence ---------------------------------------------
@@ -293,6 +300,7 @@ function loadState(){
     if(typeof s.zoom === 'number' && s.zoom >= 0 && s.zoom <= 22) state.zoom = s.zoom;
     if(typeof s.railCollapsed === 'boolean') state.railCollapsed = s.railCollapsed;
     if(typeof s.modeInfoOpen === 'boolean') state.modeInfoOpen = s.modeInfoOpen;
+    if(typeof s.showPolygons === 'boolean') state.showPolygons = s.showPolygons;
     if(Array.isArray(s.active)){
       active.clear();
       s.active.filter(k => OWNERS.some(o => o.key===k)).forEach(k => active.add(k));
@@ -308,6 +316,7 @@ function saveState(){
       bydel: state.bydel, mode: state.mode, base: state.base, active: [...active],
       center: state.center, zoom: state.zoom,
       railCollapsed: state.railCollapsed, modeInfoOpen: state.modeInfoOpen,
+      showPolygons: state.showPolygons,
     }));
   }catch(e){ /* private mode etc. */ }
 }
@@ -428,8 +437,8 @@ function render(){
 
   // Polygon layer is shared across modes — parcel outlines are always
   // informative; they don't cluster meaningfully and they don't make sense to
-  // render as heat alone.
-  if(polys.length){
+  // render as heat alone. Skip entirely when the user has toggled them off.
+  if(state.showPolygons && polys.length){
     polyLayer = L.geoJSON({type:'FeatureCollection', features:polys}, {
       style: f => {
         const c = colorOf(f.properties.eier);
@@ -612,6 +621,13 @@ applyModeUi();
 modeInfoBtn.addEventListener('click', () => {
   state.modeInfoOpen = !state.modeInfoOpen;
   applyModeUi(); saveState();
+});
+
+const showPolysCb = document.getElementById('show-polygons');
+showPolysCb.checked = state.showPolygons;
+showPolysCb.addEventListener('change', () => {
+  state.showPolygons = showPolysCb.checked;
+  saveState(); render();
 });
 document.getElementById('mode').addEventListener('click',e=>{
   const b=e.target.closest('button'); if(!b) return;
