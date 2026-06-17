@@ -232,6 +232,11 @@
   /* Context-only "you are inside" rows. No hover, no click, no distance. */
   .pin-pop .inside-row{display:flex;gap:6px;padding:4px 6px;margin:0 -6px;
     border-top:1px solid var(--line);font-size:11.5px;line-height:1.4}
+  /* Scrollable proximity list — keeps the popup compact when there are
+     many candidates. */
+  .pin-pop .prox-list{max-height:260px;overflow-y:auto;margin:0 -6px;padding:0 6px}
+  .pin-pop .prox-list::-webkit-scrollbar{width:6px}
+  .pin-pop .prox-list::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px}
   /* Distance label that sits at the centre of each pinned comparison line. */
   .leaflet-tooltip.pin-line-label{
     background:var(--c-pin);color:#ffffff;
@@ -852,8 +857,17 @@ function pinPopupHTML(pin){
     const r = featureClosestForMode(pin, f);
     return r ? { ...r, f } : null;
   }).filter(Boolean);
+  // Inside section stays inclusive — knowing you're standing on an EBY road
+  // parcel is useful context.
   const inside  = all.filter(x => x.inside).slice(0, 5);
-  const outside = all.filter(x => !x.inside).sort((a,b) => a.dist - b.dist).slice(0, 5);
+  // Outside (ranked) prefers buildings: filter out Eiendoms- og byfornyelses-
+  // etaten (tomter / veiareal — usually less interesting to compare to than
+  // schools, housing, harbour buildings). Fall back to the full list if the
+  // filter would leave us empty.
+  const isBuildingEier = e => e !== 'Eiendoms- og byfornyelsesetaten';
+  const outsideAll = all.filter(x => !x.inside).sort((a,b) => a.dist - b.dist);
+  const outsideBuildings = outsideAll.filter(x => isBuildingEier(x.f.properties.eier));
+  const outside = (outsideBuildings.length ? outsideBuildings : outsideAll).slice(0, 25);
 
   const insideRows = inside.map(({f}) => {
     const p = f.properties;
@@ -900,7 +914,7 @@ function pinPopupHTML(pin){
       </div>` : ''}
     <div style="margin-top:8px;font-size:11.5px;line-height:1.4">
       <div class="pk" style="margin-bottom:2px">Nærmeste kommunale tomter (utenfor):</div>
-      ${proxRows || '<span class="pk">(ingen utenfor)</span>'}
+      <div class="prox-list">${proxRows || '<span class="pk">(ingen utenfor)</span>'}</div>
     </div>
     <button class="pop-del" data-id="${pin.id}">Slett punkt</button>
   </div>`;
@@ -1109,15 +1123,11 @@ function highlightSidebarPin(id){
 function renderPinMarker(pin){
   const m = L.marker([pin.lat, pin.lon], {icon: userPinIcon()});
   m.bindPopup(() => pinPopupHTML(pin), {maxWidth: 320, className: 'pin-popup'});
-  m.on('popupopen', e => {
-    const root = e.popup.getElement();
+  // Wire up the interactive bits of the popup body. Called from popupopen
+  // AND from refreshPinUI (after setPopupContent), since setPopupContent
+  // replaces the DOM without firing popupopen again.
+  const wirePopup = (root) => {
     if (!root) return;
-    // Highlight the sidebar row matching this pin.
-    highlightSidebarPin(pin.id);
-    // For each proximity row: hover draws a dashed line to the row's feature
-    // (closest point computed in the current distance mode); clicking pins a
-    // solid labelled line that survives mouse-out, popup close, AND reload.
-    // Click again to unpin.
     const pinnedEi = new Set(pin.pinnedFeatures || []);
     root.querySelectorAll('.prox-row').forEach(row => {
       const eiendom = row.dataset.eiendom;
@@ -1139,7 +1149,6 @@ function renderPinMarker(pin){
         if (isPinned) hideHoverLine();
       });
     });
-    // In-popup delete button.
     const delBtn = root.querySelector('.pop-del');
     if (delBtn) {
       delBtn.addEventListener('click', () => {
@@ -1147,6 +1156,11 @@ function renderPinMarker(pin){
         deletePin(pin.id);
       });
     }
+  };
+  m._komboWirePopup = wirePopup;     // exposed so refreshPinUI can call it
+  m.on('popupopen', e => {
+    highlightSidebarPin(pin.id);
+    wirePopup(e.popup.getElement());
   });
   m.on('popupclose', () => {
     hideHoverLine();
@@ -1313,7 +1327,12 @@ function refreshPinUI(pin){
   savePins();
   renderPinList();
   const m = pinMarkers.get(pin.id);
-  if (m && m.isPopupOpen()) m.setPopupContent(pinPopupHTML(pin));
+  if (m && m.isPopupOpen()) {
+    m.setPopupContent(pinPopupHTML(pin));
+    // setPopupContent does NOT re-fire popupopen, so manually re-wire
+    // row handlers + restore pinned-class on the new DOM.
+    if (m._komboWirePopup) m._komboWirePopup(m.getPopup().getElement());
+  }
 }
 
 async function enrichPin(pin){
@@ -1511,12 +1530,11 @@ distModeEl.addEventListener('click', e => {
   saveState();
   rebuildAllPinLines();
   // Refresh any open popup so distance labels + row data swap immediately.
-  for (const m of pinMarkers.values()) {
-    if (m.isPopupOpen()) {
-      const id = [...pinMarkers].find(([, mm]) => mm === m)?.[0];
-      const pin = userPins.find(p => p.id === id);
-      if (pin) m.setPopupContent(pinPopupHTML(pin));
-    }
+  // refreshPinUI handles the post-setPopupContent re-wiring.
+  for (const [id, m] of pinMarkers) {
+    if (!m.isPopupOpen()) continue;
+    const pin = userPins.find(p => p.id === id);
+    if (pin) refreshPinUI(pin);
   }
 });
 
