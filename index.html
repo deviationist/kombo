@@ -687,12 +687,18 @@ function renderPinnedTargetOverlay(){
       const f = _findFeature(ei);
       if (!f) continue;
       const c = colorOf(f.properties.eier);
-      if (f.geometry.type === 'Point') {
-        const [lon, lat] = f.geometry.coordinates;
-        L.marker([lat, lon], {icon: dot(c)})
-          .bindPopup(popup(f.properties, [lon, lat]))
+      const a = featureAnchor(f);
+      // Always render a marker at the feature's anchor — that's the "unit"
+      // the pinned line refers to, regardless of view mode.
+      if (a) {
+        L.marker([a[1], a[0]], {icon: dot(c)})
+          .bindPopup(popup(f.properties, a))
           .addTo(pinnedTargetOverlay);
-      } else {
+      }
+      // Also render the parcel outline if the user has "Vis tomtegrenser"
+      // enabled — irrespective of view mode, since a pinned-line target
+      // needs to stay identifiable as a unit even under the heat layer.
+      if (state.showPolygons && f.geometry.type !== 'Point') {
         L.geoJSON(f, {
           style: () => ({color:c, weight:1.8, fillColor:c, fillOpacity:0.32, opacity:1}),
           onEachFeature: (ft, layer) => layer.bindPopup(popup(ft.properties, featureAnchor(ft))),
