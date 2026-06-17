@@ -54,9 +54,31 @@
     if (s.railRCollapsed) document.documentElement.classList.add('rail-r-collapsed');
   } catch (e) {}
 </script>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<!-- Self-hosted fonts (was the Google Fonts CDN). Same-origin + preloaded so the
+     webfonts are fetched before first paint — this removes the FOUT/swap flicker
+     and drops the two third-party round trips (fonts.googleapis.com →
+     fonts.gstatic.com). Inter v20 is a VARIABLE font, so one file per subset
+     covers weights 400–600. `crossorigin` is required even same-origin because
+     font fetches are always CORS-anonymous; omitting it double-fetches. -->
+<link rel="preload" href="fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/barlow-condensed-600.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/barlow-condensed-500.woff2" as="font" type="font/woff2" crossorigin>
 <style>
+  /* @font-face — unicode-range lets the browser skip latin-ext unless a glyph
+     needs it. font-display:swap keeps text visible; with the preloads above the
+     swap happens at/near first paint, so the flicker is effectively gone. */
+  @font-face{font-family:'Inter';font-style:normal;font-weight:100 900;font-display:swap;
+    src:url(fonts/inter-latin.woff2) format('woff2');
+    unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+  @font-face{font-family:'Inter';font-style:normal;font-weight:100 900;font-display:swap;
+    src:url(fonts/inter-latin-ext.woff2) format('woff2');
+    unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF}
+  @font-face{font-family:'Barlow Condensed';font-style:normal;font-weight:500;font-display:swap;
+    src:url(fonts/barlow-condensed-500.woff2) format('woff2');
+    unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+  @font-face{font-family:'Barlow Condensed';font-style:normal;font-weight:600;font-display:swap;
+    src:url(fonts/barlow-condensed-600.woff2) format('woff2');
+    unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
   :root{
     --ground:#0e1417; --panel:#161d21; --panel-2:#1d262b; --line:#2a363c;
     --ink:#e8edf0; --muted:#8a979e;
@@ -188,6 +210,8 @@
   .figs{display:flex;gap:18px;margin-bottom:4px}
   .fig .n{font:600 30px/1 'Barlow Condensed',sans-serif;font-variant-numeric:tabular-nums}
   .fig .u{font-size:11px;color:var(--muted);margin-top:2px}
+  /* `.help` hints that a label has an explanatory tooltip (the daa-areal note). */
+  .fig .u.help{cursor:help;text-decoration:underline dotted;text-underline-offset:2px;text-decoration-color:var(--line)}
   /* Small parcel ("tomter") sub-count under the eiendommer figure — eierseksjoner
      mean several eiendommer can share one tomt, so this clarifies the headline. */
   .fig .sub{font-size:10.5px;color:var(--muted);margin-top:3px;font-variant-numeric:tabular-nums;min-height:1em}
@@ -461,7 +485,7 @@
         <div class="label">I visningen nå</div>
         <div class="figs">
           <div class="fig"><div class="n" id="fCount">–</div><div class="u">eiendommer</div><div class="sub" id="fParcels"></div></div>
-          <div class="fig"><div class="n" id="fArea">–</div><div class="u">daa areal</div></div>
+          <div class="fig"><div class="n" id="fArea">–</div><div class="u help" title="daa = dekar (mål) = 1 000 m². Samlet tomteareal for eiendommene som vises. Eiendommer utenfor Oslo er ikke medregnet.">daa areal</div></div>
         </div>
       </section>
 
