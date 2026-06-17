@@ -444,11 +444,11 @@ function loadState(){
     if(typeof s.showPolygons === 'boolean') state.showPolygons = s.showPolygons;
     if(s.distanceMode === 'edge' || s.distanceMode === 'marker') state.distanceMode = s.distanceMode;
     if(Array.isArray(s.active)){
+      // An empty array IS a valid explicit choice — the user untoggled
+      // everything. Distinguish that from "never set" (= property absent
+      // from storage entirely; in that case the initial default kicks in).
       active.clear();
       s.active.filter(k => OWNERS.some(o => o.key===k)).forEach(k => active.add(k));
-      // If all owners were untoggled in storage (e.g. accidental clear), fall
-      // back to the default so we don't render an empty map.
-      if(active.size === 0) DEFAULT_ACTIVE_OWNERS.forEach(k => active.add(k));
     }
   }catch(e){ /* corrupt JSON / unavailable storage — ignore */ }
 }
@@ -597,15 +597,34 @@ function filtered(){
   });
 }
 
+// Features that are targeted by an actively-rendered pinned line — they need
+// to appear on the map even if the agency filter would hide them, so the
+// user can actually see what their measurement is pointing at.
+function pinnedTargetFeatures(filteredEi){
+  const out = [];
+  const seen = new Set(filteredEi);
+  for (const pin of (typeof userPins !== 'undefined' ? userPins : [])) {
+    const visible = visibleOutsideEi(pin);
+    for (const ei of (pin.pinnedFeatures || [])) {
+      if (!visible.has(ei) || seen.has(ei)) continue;
+      const f = _findFeature(ei);
+      if (f) { out.push(f); seen.add(ei); }
+    }
+  }
+  return out;
+}
+
 function render(){
   const rows = filtered();
+  const extras = pinnedTargetFeatures(new Set(rows.map(f => f.properties.eiendom)));
+  const mapRows = extras.length ? rows.concat(extras) : rows;
   // Clear all data layers — they're re-attached per mode below.
   clusterLayer.clearLayers();
   if(heatLayer){ map.removeLayer(heatLayer); heatLayer=null; }
   if(polyLayer){ map.removeLayer(polyLayer); polyLayer=null; }
 
-  const points = rows.filter(f=>f.geometry.type==='Point');
-  const polys  = rows.filter(f=>f.geometry.type!=='Point');
+  const points = mapRows.filter(f=>f.geometry.type==='Point');
+  const polys  = mapRows.filter(f=>f.geometry.type!=='Point');
 
   // Polygon layer is shared across modes — parcel outlines are always
   // informative; they don't cluster meaningfully and they don't make sense to
@@ -647,11 +666,11 @@ function render(){
   }else{
     if(map.hasLayer(clusterLayer)) map.removeLayer(clusterLayer);
     const areaWeight = state.mode==='heatArea';
-    const maxA = areaWeight ? Math.max(1,...rows.map(f=>f.properties.areal||0)) : 1;
+    const maxA = areaWeight ? Math.max(1,...mapRows.map(f=>f.properties.areal||0)) : 1;
     // featureAnchor prefers the Geonorge address point when available, so
     // polygons with an address contribute heat at the building's front door
     // rather than at an arbitrary first-vertex of the parcel boundary.
-    const pts = rows.map(f=>{
+    const pts = mapRows.map(f=>{
       const a = featureAnchor(f); // [lon, lat]
       const w = areaWeight ? Math.min(1, Math.sqrt((f.properties.areal||0)/maxA)) : .6;
       return [a[1],a[0],w];
@@ -1105,6 +1124,9 @@ function togglePinnedLine(pin, feature){
     pin.pinnedFeatures = [...(pin.pinnedFeatures || []), eiendom];
   }
   savePins();
+  // Re-render the map so pinned-target features appear (or disappear) on
+  // top of the agency-filter result.
+  render();
   return !isPinned;
 }
 function clearPinLines(pinId){
@@ -1240,6 +1262,8 @@ function deletePin(id){
   clearPinLines(id);
   savePins();
   renderPinList();
+  // Pinned-target extras tied to this pin are now stale — re-render the map.
+  render();
 }
 
 // ---------------------------------------------------------------------------
@@ -1549,6 +1573,9 @@ distModeEl.addEventListener('click', e => {
   applyDistMode();
   saveState();
   rebuildAllPinLines();
+  // visibleOutsideEi depends on distanceMode, which changes which features
+  // count as "pinned targets" → re-render so the map reflects the new set.
+  render();
   // Refresh any open popup so distance labels + row data swap immediately.
   // refreshPinUI handles the post-setPopupContent re-wiring.
   for (const [id, m] of pinMarkers) {
