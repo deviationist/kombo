@@ -259,13 +259,27 @@
   .rsect-body .hint{margin:0 0 12px;font-size:12px;color:var(--muted);line-height:1.4}
   .rsect-body section{margin-bottom:18px}
   .rsect-body section:last-child{margin-bottom:0}
-  /* List controls (bbox-only + sort) */
-  .list-controls{display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap}
-  .list-controls .cbx{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);cursor:pointer}
+  /* List controls (bbox-only + sort). Pinned to one line; select shrinks
+     to fit rather than wrapping below the checkbox. */
+  .list-controls{display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:nowrap}
+  .list-controls .cbx{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);cursor:pointer;white-space:nowrap;flex:none}
   .list-controls .cbx input{accent-color:var(--c-eby)}
   .list-controls select{background:var(--panel-2);color:var(--ink);border:1px solid var(--line);
-    border-radius:6px;padding:5px 8px;font:500 12px Inter;margin-left:auto;cursor:pointer}
+    border-radius:6px;padding:5px 8px;font:500 12px Inter;cursor:pointer;margin-left:auto;
+    min-width:0;flex:0 1 auto}
   .list-controls select:hover{border-color:var(--muted)}
+  /* List text filter */
+  .list-filter-wrap{position:relative;margin-bottom:8px}
+  #list-filter{width:100%;background:var(--panel-2);color:var(--ink);border:1px solid var(--line);
+    border-radius:6px;padding:7px 28px 7px 10px;font:500 12px Inter;box-sizing:border-box}
+  #list-filter::placeholder{color:var(--muted)}
+  #list-filter:focus{outline:none;border-color:var(--c-eby)}
+  #list-filter-clear{position:absolute;right:6px;top:50%;transform:translateY(-50%);
+    width:18px;height:18px;display:none;align-items:center;justify-content:center;
+    background:var(--line);color:var(--ink);border:0;border-radius:50%;
+    cursor:pointer;font-size:13px;line-height:1;padding:0}
+  #list-filter-clear:hover{background:var(--muted);color:var(--ground)}
+  #list-filter-clear.visible{display:flex}
   /* List rows */
   #list-rows{display:flex;flex-direction:column;gap:3px}
   .list-row{padding:7px 8px 7px 10px;border-radius:6px;cursor:pointer;
@@ -364,6 +378,10 @@
   #search-results .res .ttl{color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   #search-results .res .sub{color:var(--muted);font-size:11px;margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   #search-results .res .pk{color:var(--muted);font:600 10px Inter;font-variant-numeric:tabular-nums;flex:none}
+  #search-results .res.bydel-row{background:var(--panel-2)}
+  #search-results .res.bydel-row:hover{background:var(--panel)}
+  #search-results .res .bydel-icon{width:auto;height:auto;background:none !important;border-radius:0;
+    color:var(--c-eby);font-size:13px;line-height:1;align-self:center}
   /* Map right-click context menu */
   #ctx-menu{position:absolute;z-index:2000;background:var(--panel-2);border:1px solid var(--line);
     border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,.35);padding:4px;min-width:170px;
@@ -512,6 +530,10 @@
         <summary>Listevisning <span class="ct" id="list-count">0</span></summary>
         <div class="rsect-body">
           <p class="hint">Eiendommene som vises på kartet akkurat nå.</p>
+          <div class="list-filter-wrap">
+            <input id="list-filter" type="text" autocomplete="off" placeholder="Filtrér listen (adresse, bruksnavn, matrikkel …)">
+            <button id="list-filter-clear" type="button" title="Tøm filteret" aria-label="Tøm filteret">×</button>
+          </div>
           <div class="list-controls">
             <label class="cbx">
               <input type="checkbox" id="list-bbox-only">
@@ -656,6 +678,14 @@ function urlFromState(){
   // onto the picked property (the field itself isn't persisted; the query
   // is ephemeral once a result has been chosen).
   if (typeof searchTargetEi !== 'undefined' && searchTargetEi) p.set('ei', searchTargetEi);
+  // Selected user pin — only the bare coordinates round-trip. Label /
+  // measurement state are deliberately lost on share; the recipient adds
+  // a fresh pin at the location and can enrich locally.
+  if (typeof activePinId !== 'undefined' && activePinId
+      && typeof userPins !== 'undefined') {
+    const ap = userPins.find(pp => pp.id === activePinId);
+    if (ap) p.set('pin', `${ap.lat.toFixed(5)},${ap.lon.toFixed(5)}`);
+  }
   return p.toString();
 }
 function applyUrlHash(){
@@ -697,6 +727,16 @@ map.on('moveend zoomend', () => {
   state.center = [c.lat, c.lng];
   state.zoom = map.getZoom();
   saveState();
+});
+// Pick up the eiendom from any feature popup that opens — the wrapper div
+// in detail/list popup HTML carries `data-feature-ei`. This makes a normal
+// marker click round-trip through the URL hash just like a list/search
+// pick would.
+map.on('popupopen', e => {
+  const root = e.popup.getElement();
+  if (!root) return;
+  const ei = root.querySelector('[data-feature-ei]')?.dataset.featureEi;
+  if (ei) setSearchTarget(ei);
 });
 const darkLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
   attribution:'&copy; OpenStreetMap &copy; CARTO', maxZoom:19, subdomains:'abcd'
@@ -824,12 +864,12 @@ function listPopupHTML(p, siblings){
       <span class="pk">${sp.eier.split(' ')[0]}</span>
     </div>`;
   }).join('');
-  return `<b>${(p.adresse || '').trim() || 'Eiendom'}</b>
+  return `<div data-feature-ei="${p.eiendom}"><b>${(p.adresse || '').trim() || 'Eiendom'}</b>
     ${post ? `<div class="pk" style="margin-top:2px">${post}</div>` : '<br>'}
     <span class="pk">Eier</span> ${p.eier}<br>
     ${p.bydel?`<span class="pk">Bydel</span> ${p.bydel}<br>`:''}
     <div class="pk" style="margin-top:8px;margin-bottom:2px">${siblings.length} enheter på denne adressen:</div>
-    <div class="popup-sibs-list">${rows}</div>`;
+    <div class="popup-sibs-list">${rows}</div></div>`;
 }
 
 function detailPopupHTML(p, anchor, siblings){
@@ -878,7 +918,7 @@ function detailPopupHTML(p, anchor, siblings){
     if (+mt.snr > 0) title += ` — seksjon ${+mt.snr}`;
     else if (+mt.fnr > 0) title += ` — feste ${+mt.fnr}`;
   }
-  return `${navHtml}<b>${title}</b>
+  return `<div data-feature-ei="${p.eiendom}">${navHtml}<b>${title}</b>
     ${post ? `<div class="pk" style="margin-top:2px">${post}</div>` : '<br>'}
     <span class="pk">Matrikkel</span> ${p.eiendom}<br>
     <span class="pk">Eier</span> ${p.eier}<br>
@@ -891,7 +931,7 @@ function detailPopupHTML(p, anchor, siblings){
       ${sv?`<a class="sv-link" href="${sv}" target="_blank" rel="noopener">Street View ↗</a>`:''}
       ${(gmapsAddr||sv) && gb?' · ':''}
       ${gb?`<a class="sv-link" href="${gb}" target="_blank" rel="noopener">Grunnboken ↗</a>`:''}
-    </div>`;
+    </div></div>`;
 }
 
 function filtered(){
@@ -907,10 +947,27 @@ function filtered(){
 // EVERY view mode — so even in Tetthet/Areal-vekt (where the main map is a
 // heat blob) the user still sees the specific unit their line points at.
 const pinnedTargetOverlay = L.layerGroup().addTo(map);
-// The currently-selected search result — kept visible on the map so the user
-// doesn't lose sight of it when their result is from an unchecked agency.
-// In-memory only (not persisted); cleared when the search is cleared.
+// The currently-selected feature — its popup is open and/or it was picked
+// from search/list. Held in the pinned-target overlay so it stays visible
+// regardless of the agency filter. In-memory only; round-trips through
+// the URL hash as `ei=` so the selection survives a share.
 let searchTargetEi = null;
+// The currently-selected user pin (custom marker) — whichever pin's popup
+// is open. Round-trips through the URL hash as `pin=lat,lon` so the user
+// can share a marker. Name + measurement state aren't transferred.
+let activePinId = null;
+
+// Single place that all "the selection changed" updates flow through, so
+// every entry point (popup open, list click, search click, URL boot)
+// keeps the overlay + list highlight + × visibility + URL in sync.
+function setSearchTarget(ei){
+  if (searchTargetEi === ei) return;
+  searchTargetEi = ei;
+  renderPinnedTargetOverlay();
+  if (typeof renderList === 'function') renderList();
+  if (typeof syncSearchClear === 'function') syncSearchClear();
+  syncUrlDebounced();
+}
 
 function renderPinnedTargetOverlay(){
   pinnedTargetOverlay.clearLayers();
@@ -1063,14 +1120,18 @@ const LIST_INITIAL = 200;
 let _listShown = LIST_INITIAL;
 let _listSort = 'addr';
 let _listBboxOnly = false;
+let _listFilter = '';        // free-text filter applied AFTER the agency/bydel filter
 let _listPool = [];          // remembered between renders, for "Vis flere"
 
 function _ownerShort(eier){
+  // Light cleanup: strip the suffix on the three KFs ("Oslobygg KF" →
+  // "Oslobygg"). Don't try to shorten EBY — the truncation looked like
+  // a parser bug ("Eiendoms-") and the row already ellipses anything
+  // over the column width, so leave the full name in.
   if (!eier) return '';
   return eier
     .replace(' Oslo KF', '')
     .replace(' KF', '')
-    .replace(' og byfornyelsesetaten', '')
     .trim();
 }
 
@@ -1097,6 +1158,22 @@ function renderList(){
     pool = pool.filter(f => {
       const a = featureAnchor(f);
       return a && b.contains([a[1], a[0]]);
+    });
+  }
+
+  // Free-text filter — same fields the floating search hits (adresse,
+  // bruksnavn, matrikkel, bydel), but only against the already-filtered
+  // pool so it narrows what's on the map rather than searching the whole
+  // dataset.
+  if (_listFilter) {
+    const ql = _listFilter.toLowerCase();
+    pool = pool.filter(f => {
+      const p = f.properties;
+      return (p.adresse   && p.adresse.toLowerCase().includes(ql))
+          || (p.bruksnavn && p.bruksnavn.toLowerCase().includes(ql)
+                          && !GENERIC_BRUKSNAVN.has(p.bruksnavn.trim()))
+          || (p.eiendom   && p.eiendom.toLowerCase().includes(ql))
+          || (p.bydel     && p.bydel.toLowerCase().includes(ql));
     });
   }
 
@@ -1710,12 +1787,18 @@ function renderPinMarker(pin){
   m.on('popupopen', e => {
     highlightSidebarPin(pin.id);
     wirePopup(e.popup.getElement());
+    activePinId = pin.id;
+    syncUrlDebounced();
   });
   m.on('popupclose', () => {
     hideHoverLine();
     // Pinned lines persist after the popup closes — user can re-open to
     // toggle them off, or delete the pin (which drops them all).
     highlightSidebarPin(null);
+    if (activePinId === pin.id) {
+      activePinId = null;
+      syncUrlDebounced();
+    }
   });
   m.addTo(userPinLayer);
   pinMarkers.set(pin.id, m);
@@ -1960,12 +2043,46 @@ document.getElementById('pin-list').addEventListener('click', e => {
 const listRowsEl = document.getElementById('list-rows');
 const listSortEl = document.getElementById('list-sort');
 const listBboxEl = document.getElementById('list-bbox-only');
+const listFilterEl = document.getElementById('list-filter');
+const listFilterClearEl = document.getElementById('list-filter-clear');
 
 // Restore persisted preferences before wiring change handlers.
 _listSort = state.listSort || 'addr';
 _listBboxOnly = !!state.listBboxOnly;
 listSortEl.value = _listSort;
 listBboxEl.checked = _listBboxOnly;
+
+// Prefix only the currently-selected sort option with "Sorter: " — the
+// dropdown items stay as plain labels (Adresse, Eier …); the closed
+// display reads as a full mini-sentence ("Sorter: Adresse").
+function applySortPrefix(){
+  for (const opt of listSortEl.options) {
+    if (!opt.dataset.base) opt.dataset.base = opt.textContent;
+    opt.textContent = opt.selected ? `Sorter: ${opt.dataset.base}` : opt.dataset.base;
+  }
+}
+listSortEl.addEventListener('change', applySortPrefix);
+applySortPrefix();
+
+function syncListFilterClear(){ listFilterClearEl.classList.toggle('visible', !!listFilterEl.value); }
+let _listFilterT = null;
+listFilterEl.addEventListener('input', () => {
+  syncListFilterClear();
+  clearTimeout(_listFilterT);
+  _listFilterT = setTimeout(() => {
+    _listFilter = listFilterEl.value.trim();
+    _listShown = LIST_INITIAL;
+    renderList();
+  }, 90);
+});
+listFilterEl.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { listFilterEl.value = ''; listFilterEl.dispatchEvent(new Event('input')); listFilterEl.blur(); }
+});
+listFilterClearEl.addEventListener('click', () => {
+  listFilterEl.value = '';
+  listFilterEl.dispatchEvent(new Event('input'));
+  listFilterEl.focus();
+});
 
 listSortEl.addEventListener('change', () => {
   _listSort = listSortEl.value;
@@ -1997,15 +2114,11 @@ listRowsEl.addEventListener('click', e => {
   const f = _findFeature(ei);
   if (!f) return;
   // Same behaviour as a search-result click: pin the target so it stays
-  // visible regardless of agency filter, fly there, open the popup, mark
-  // the row active.
-  searchTargetEi = ei;
-  syncSearchClear();
-  syncUrlDebounced();
+  // visible regardless of agency filter, fly there, open the popup.
   const a = featureAnchor(f);
   if (a) map.flyTo([a[1], a[0]], Math.max(map.getZoom(), 17), {duration: 0.5});
+  setSearchTarget(ei);
   jumpToFeature(ei, 'auto');
-  render();
 });
 
 // "Click on map" mode — toggles a crosshair cursor and arms a single click.
@@ -2255,13 +2368,41 @@ function doDataSearch(q){
     if (unique.length >= 12) break;
   }
 
-  if (!unique.length) {
+  // Bydel rows — when the query matches a bydel name, offer to apply the
+  // bydel as a filter instead of (or in addition to) picking a single
+  // feature. Skipped on matrikkel-mode queries (which name a property by
+  // number, not a district).
+  let bydelHits = [];
+  if (!matr) {
+    const ql = q.toLowerCase();
+    const counts = {};
+    for (const f of DATA) {
+      const b = f.properties.bydel;
+      if (b) counts[b] = (counts[b] || 0) + 1;
+    }
+    bydelHits = Object.keys(counts)
+      .filter(b => b.toLowerCase().includes(ql))
+      .sort((a, b) => a.localeCompare(b, 'nb'))
+      .slice(0, 3);
+  }
+
+  if (!unique.length && !bydelHits.length) {
     searchRes.innerHTML = `<div class="res"><span class="ttl pk">Ingen treff</span></div>`;
     searchRes.classList.add('open');
     return;
   }
 
-  searchRes.innerHTML = unique.map(f => {
+  const bydelHtml = bydelHits.map(b => `
+    <div class="res bydel-row" data-bydel="${b}" title="Filtrér kartet på bydel ${b}">
+      <span class="dot bydel-icon">▦</span>
+      <div class="body">
+        <div class="ttl">Filtrér på bydel: ${b}</div>
+        <div class="sub">Setter bydel-filter i venstre panel</div>
+      </div>
+      <span class="pk">→</span>
+    </div>`).join('');
+
+  const featureHtml = unique.map(f => {
     const p = f.properties;
     const c = colorOf(p.eier);
     const sub = [p.eier];
@@ -2275,6 +2416,8 @@ function doDataSearch(q){
       <span class="pk">${p.eiendom.replace(/^\d+-/, '')}</span>
     </div>`;
   }).join('');
+
+  searchRes.innerHTML = bydelHtml + featureHtml;
   searchRes.classList.add('open');
 }
 
@@ -2287,9 +2430,8 @@ function clearSearch(){
   searchQ.value = '';
   searchRes.classList.remove('open');
   searchRes.innerHTML = '';
+  setSearchTarget(null);
   syncSearchClear();
-  if (searchTargetEi !== null) { searchTargetEi = null; render(); }
-  syncUrlDebounced();
 }
 searchQ.addEventListener('input', () => {
   syncSearchClear();
@@ -2316,6 +2458,22 @@ syncSearchClear();   // initial state
 // Click a result → fly map there + open popup (auto mode = list view for
 // multi-unit buildings, detail for single-unit), then close the dropdown.
 searchRes.addEventListener('click', e => {
+  // Bydel-filter row → apply state.bydel and clear the search; no feature.
+  const bRow = e.target.closest('.res[data-bydel]');
+  if (bRow) {
+    const b = bRow.dataset.bydel;
+    state.bydel = b;
+    bydelSel.value = b;
+    saveState();
+    render();
+    // After applying a bydel filter, fit the map to the filtered features.
+    const pts = filtered().map(f => { const a = featureAnchor(f); return a ? [a[1], a[0]] : null; }).filter(Boolean);
+    if (pts.length) map.fitBounds(pts, {padding:[40,40]});
+    clearSearch();
+    searchRes.classList.remove('open');
+    searchQ.blur();
+    return;
+  }
   const res = e.target.closest('.res[data-eiendom]');
   if (!res) return;
   const f = _findFeature(res.dataset.eiendom);
@@ -2325,12 +2483,9 @@ searchRes.addEventListener('click', e => {
   // at empty space. Field clears too: once you've picked, the typed query
   // is just noise; × stays visible while a target is pinned so the
   // highlight is still dismissable.
-  searchTargetEi = res.dataset.eiendom;
   searchQ.value = '';
   searchRes.innerHTML = '';
-  syncSearchClear();
-  render();
-  syncUrlDebounced();
+  setSearchTarget(res.dataset.eiendom);
   const a = featureAnchor(f);
   if (a) map.flyTo([a[1], a[0]], Math.max(map.getZoom(), 17), {duration: 0.5});
   jumpToFeature(res.dataset.eiendom, 'auto');
@@ -2429,10 +2584,8 @@ async function boot(){
     });
   });
   renderPinList();
-  // Re-apply a search-target from the URL hash now that the dataset is
-  // loaded. urlFromState/applyUrlHash run before DATA is ready, so we
-  // pick this up here. If the eiendom doesn't exist in the current
-  // dataset (kommune dropped it), silently ignore.
+  // Re-apply share-targets from the URL hash now that the dataset is loaded
+  // (urlFromState/applyUrlHash run before DATA is ready).
   const params = new URLSearchParams(location.hash.slice(1));
   const initialEi = params.get('ei');
   if (initialEi && _findFeature(initialEi)) {
@@ -2446,6 +2599,22 @@ async function boot(){
     syncSearchClear();
     // Open the popup for the selected target, no fly (already centred).
     jumpToFeature(searchTargetEi, 'auto');
+  }
+  // pin=<lat>,<lon> — shared user marker. Add a fresh pin (the recipient's
+  // copy; label + measurement state intentionally aren't transferred) and
+  // open its popup so the receiver lands on it.
+  const initialPin = params.get('pin');
+  if (initialPin) {
+    const [latStr, lonStr] = initialPin.split(',');
+    const lat = parseFloat(latStr), lon = parseFloat(lonStr);
+    if (Number.isFinite(lat) && Number.isFinite(lon)) {
+      // De-dupe against an existing pin at (near-)identical coords — the
+      // user might re-open their own share link.
+      const exists = userPins.find(pp =>
+        Math.abs(pp.lat - lat) < 1e-4 && Math.abs(pp.lon - lon) < 1e-4);
+      const target = exists || (addPin({lat, lon, label: null}), userPins[userPins.length - 1]);
+      setTimeout(() => pinMarkers.get(target.id)?.openPopup(), 500);
+    }
   }
 }
 boot();
