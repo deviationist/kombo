@@ -476,7 +476,7 @@
        shifts with the left rail like they do. -->
   <div id="search-bar">
     <div class="search-input-wrap">
-      <input id="search-q" type="text" autocomplete="off" placeholder="Søk i kommunens eiendommer (adresse, matrikkel, bruksnavn) …">
+      <input id="search-q" type="text" autocomplete="off" autofocus placeholder="Søk i kommunens eiendommer (adresse, matrikkel, bruksnavn) …">
       <button id="search-clear" type="button" title="Tøm søket" aria-label="Tøm søket">×</button>
     </div>
     <div id="search-results"></div>
@@ -586,6 +586,10 @@ function urlFromState(){
   if (state.distanceMode !== 'edge') p.set('dm', state.distanceMode);
   // Always emit `own` — empty array (= no agencies) is a meaningful state.
   p.set('own', [...active].map(k => OWNER_CODE[k]).filter(Boolean).join(','));
+  // Search query — shareable so a link can drop someone straight onto a hit.
+  // `searchQ` is created later in the script; guard until it exists.
+  const sq = (typeof searchQ !== 'undefined' && searchQ?.value || '').trim();
+  if (sq) p.set('q', sq);
   return p.toString();
 }
 function applyUrlHash(){
@@ -837,48 +841,59 @@ function filtered(){
 // EVERY view mode — so even in Tetthet/Areal-vekt (where the main map is a
 // heat blob) the user still sees the specific unit their line points at.
 const pinnedTargetOverlay = L.layerGroup().addTo(map);
+// The currently-selected search result — kept visible on the map so the user
+// doesn't lose sight of it when their result is from an unchecked agency.
+// In-memory only (not persisted); cleared when the search is cleared.
+let searchTargetEi = null;
+
 function renderPinnedTargetOverlay(){
   pinnedTargetOverlay.clearLayers();
   const seen = new Set();
   const polySeen = new Set();   // dedupe polygons by (gnr,bnr) so eierseksjon stacks don't pile up
-  for (const pin of (typeof userPins !== 'undefined' ? userPins : [])) {
-    const visible = visibleOutsideEi(pin);
-    for (const ei of (pin.pinnedFeatures || [])) {
-      if (!visible.has(ei) || seen.has(ei)) continue;
-      seen.add(ei);
-      const f = _findFeature(ei);
-      if (!f) continue;
-      // Skip if the main map layer is already showing this feature — i.e.
-      // we're in Punkter mode AND the feature's agency is filtered in.
-      // The overlay's job is to fill the gap when the main layer can't
-      // (heat modes, hidden agencies).
-      const inMainLayer = state.mode === 'clusters' && active.has(f.properties.eier);
-      if (inMainLayer) continue;
-      const c = colorOf(f.properties.eier);
-      const a = featureAnchor(f);
-      // Always render a marker at the feature's anchor — that's the "unit"
-      // the pinned line refers to, regardless of view mode.
-      if (a) {
-        L.marker([a[1], a[0]], {icon: dot(c)})
-          .bindPopup(popup(f.properties, a))
-          .addTo(pinnedTargetOverlay);
-      }
-      // Also render the parcel outline if "Vis tomtegrenser" is on. Dedupe
-      // by (gnr,bnr) so multiple pinned eierseksjoner sharing one building
-      // don't stack 50 polygons on top of each other.
-      if (state.showPolygons && f.geometry.type !== 'Point') {
-        const m = parseMatrikkel(f.properties.eiendom);
-        const key = m ? `${m.gnr}/${m.bnr}` : ei;
-        if (!polySeen.has(key)) {
-          polySeen.add(key);
-          L.geoJSON(f, {
-            style: () => ({color:c, weight:1.8, fillColor:c, fillOpacity:0.32, opacity:1}),
-            onEachFeature: (ft, layer) => layer.bindPopup(popup(ft.properties, featureAnchor(ft))),
-          }).addTo(pinnedTargetOverlay);
-        }
+
+  function addOne(ei){
+    if (!ei || seen.has(ei)) return;
+    seen.add(ei);
+    const f = _findFeature(ei);
+    if (!f) return;
+    // Skip if the main map layer is already showing this feature — i.e.
+    // we're in Punkter mode AND the feature's agency is filtered in.
+    // The overlay's job is to fill the gap when the main layer can't
+    // (heat modes, hidden agencies).
+    const inMainLayer = state.mode === 'clusters' && active.has(f.properties.eier);
+    if (inMainLayer) return;
+    const c = colorOf(f.properties.eier);
+    const a = featureAnchor(f);
+    if (a) {
+      L.marker([a[1], a[0]], {icon: dot(c)})
+        .bindPopup(popup(f.properties, a))
+        .addTo(pinnedTargetOverlay);
+    }
+    if (state.showPolygons && f.geometry.type !== 'Point') {
+      const m = parseMatrikkel(f.properties.eiendom);
+      const key = m ? `${m.gnr}/${m.bnr}` : ei;
+      if (!polySeen.has(key)) {
+        polySeen.add(key);
+        L.geoJSON(f, {
+          style: () => ({color:c, weight:1.8, fillColor:c, fillOpacity:0.32, opacity:1}),
+          onEachFeature: (ft, layer) => layer.bindPopup(popup(ft.properties, featureAnchor(ft))),
+        }).addTo(pinnedTargetOverlay);
       }
     }
   }
+
+  // Pinned-line targets (per user pin)
+  for (const pin of (typeof userPins !== 'undefined' ? userPins : [])) {
+    const visible = visibleOutsideEi(pin);
+    for (const ei of (pin.pinnedFeatures || [])) {
+      if (!visible.has(ei)) continue;
+      addOne(ei);
+    }
+  }
+  // Currently-selected search result — stays visible as long as the search
+  // field hasn't been cleared, so picking a hit from a filtered-out agency
+  // doesn't visually point at nothing.
+  if (searchTargetEi) addOne(searchTargetEi);
 }
 
 function render(){
@@ -2046,11 +2061,13 @@ function clearSearch(){
   searchRes.classList.remove('open');
   searchRes.innerHTML = '';
   syncSearchClear();
+  if (searchTargetEi !== null) { searchTargetEi = null; render(); }
+  syncUrlDebounced();
 }
 searchQ.addEventListener('input', () => {
   syncSearchClear();
   clearTimeout(_searchT);
-  _searchT = setTimeout(() => doDataSearch(searchQ.value), 120);
+  _searchT = setTimeout(() => { doDataSearch(searchQ.value); syncUrlDebounced(); }, 120);
 });
 searchQ.addEventListener('focus', () => { if (searchQ.value.trim()) doDataSearch(searchQ.value); });
 // Enter = pick the first hit. Escape = clear.
@@ -2076,6 +2093,11 @@ searchRes.addEventListener('click', e => {
   if (!res) return;
   const f = _findFeature(res.dataset.eiendom);
   if (!f) return;
+  // Pin the result so it stays visible on the map even if its agency is
+  // currently filtered out — otherwise clicking a hit can leave you pointing
+  // at empty space.
+  searchTargetEi = res.dataset.eiendom;
+  render();
   const a = featureAnchor(f);
   if (a) map.flyTo([a[1], a[0]], Math.max(map.getZoom(), 17), {duration: 0.5});
   jumpToFeature(res.dataset.eiendom, 'auto');
@@ -2175,6 +2197,15 @@ async function boot(){
   });
   renderPinList();
   render();
+  // Re-apply a search query from the URL hash now that the dataset is
+  // loaded. urlFromState/applyUrlHash run before DATA is ready, so we
+  // pick this up here.
+  const initialQ = new URLSearchParams(location.hash.slice(1)).get('q');
+  if (initialQ) {
+    searchQ.value = initialQ;
+    syncSearchClear();
+    doDataSearch(initialQ);
+  }
 }
 boot();
 </script>
