@@ -477,8 +477,69 @@ function saveState(){
       distanceMode: state.distanceMode,
     }));
   }catch(e){ /* private mode etc. */ }
+  syncUrlDebounced();
 }
 loadState();
+
+// ----------------------------------------------------------------------------
+// URL hash sync — round-trip a subset of state so links are shareable.
+// Fields that matter for "the view I'm looking at": center, zoom, mode, base,
+// active owners, bydel, showPolygons, distanceMode. UI-only prefs (sidebar
+// collapsed, modeInfoOpen) stay in localStorage only.
+// ----------------------------------------------------------------------------
+const OWNER_CODE = {
+  'Eiendoms- og byfornyelsesetaten': 'eby',
+  'Oslobygg KF':       'bygg',
+  'Boligbygg Oslo KF': 'bolig',
+  'Oslo Havn KF':      'havn',
+};
+const OWNER_KEY = Object.fromEntries(Object.entries(OWNER_CODE).map(([k,v]) => [v,k]));
+function urlFromState(){
+  const p = new URLSearchParams();
+  p.set('z', String(state.zoom));
+  p.set('lat', state.center[0].toFixed(5));
+  p.set('lon', state.center[1].toFixed(5));
+  if (state.mode !== 'clusters')  p.set('v', state.mode);
+  if (state.base !== 'dark')      p.set('base', state.base);
+  if (state.bydel)                p.set('bydel', state.bydel);
+  if (state.showPolygons === false) p.set('teig', '0');
+  if (state.distanceMode !== 'edge') p.set('dm', state.distanceMode);
+  // Always emit `own` — empty array (= no agencies) is a meaningful state.
+  p.set('own', [...active].map(k => OWNER_CODE[k]).filter(Boolean).join(','));
+  return p.toString();
+}
+function applyUrlHash(){
+  if (!location.hash || location.hash.length < 2) return;
+  const p = new URLSearchParams(location.hash.slice(1));
+  const z = parseInt(p.get('z'), 10);
+  if (Number.isFinite(z) && z >= 0 && z <= 22) state.zoom = z;
+  const lat = parseFloat(p.get('lat')), lon = parseFloat(p.get('lon'));
+  if (Number.isFinite(lat) && Number.isFinite(lon)) state.center = [lat, lon];
+  const v = p.get('v');    if (['clusters','heat','heatArea'].includes(v)) state.mode = v;
+  const b = p.get('base'); if (['dark','light','sat'].includes(b)) state.base = b;
+  if (p.has('bydel'))      state.bydel = p.get('bydel') || '';
+  const teig = p.get('teig'); if (teig === '0') state.showPolygons = false; if (teig === '1') state.showPolygons = true;
+  const dm = p.get('dm');  if (dm === 'edge' || dm === 'marker') state.distanceMode = dm;
+  if (p.has('own')) {
+    active.clear();
+    p.get('own').split(',').forEach(code => {
+      const k = OWNER_KEY[code.trim()];
+      if (k) active.add(k);
+    });
+  }
+}
+applyUrlHash();
+let _urlSyncTimer = null;
+function syncUrlDebounced(){
+  clearTimeout(_urlSyncTimer);
+  _urlSyncTimer = setTimeout(() => {
+    const q = urlFromState();
+    const next = q ? '#' + q : '';
+    if (location.hash !== next) {
+      history.replaceState(null, '', location.pathname + location.search + next);
+    }
+  }, 250);
+}
 
 const map = L.map('map',{preferCanvas:true,zoomControl:true}).setView(state.center, state.zoom);
 map.on('moveend zoomend', () => {
@@ -729,7 +790,10 @@ function buildOwners(){
     div.onclick=()=>{
       if(active.has(o.key)) active.delete(o.key); else active.add(o.key);
       div.classList.toggle('off', !active.has(o.key));
-      saveState(); render();
+      saveState();
+      // active set drives both the map render AND the popup proximity list,
+      // so refresh popups + rebuild pinned lines in lockstep.
+      refreshPopupsAndLines();
     };
     wrap.appendChild(div);
   });
@@ -901,10 +965,15 @@ function userPinIcon(){
 const MAX_PROXIMITY_M = 150;
 const isBuildingEier = e => e !== 'Eiendoms- og byfornyelsesetaten';
 function outsideRanked(pin){
-  const all = DATA.map(f => {
-    const r = featureClosestForMode(pin, f);
-    return r ? { ...r, f } : null;
-  }).filter(Boolean);
+  // Respect the left sidebar's agency filter — if the user has unchecked an
+  // agency on the map, hide its features from the comparison list too.
+  const all = DATA
+    .filter(f => active.has(f.properties.eier))
+    .map(f => {
+      const r = featureClosestForMode(pin, f);
+      return r ? { ...r, f } : null;
+    })
+    .filter(Boolean);
   const within = all
     .filter(x => !x.inside && x.dist <= MAX_PROXIMITY_M)
     .sort((a,b) => a.dist - b.dist);
@@ -922,11 +991,16 @@ function pinPopupHTML(pin){
   // Two sections: features the pin is INSIDE get a short contextual list (no
   // distance — distance to a property you're standing on isn't interesting).
   // Features OUTSIDE the pin are ranked by distance (in the current mode —
-  // edge or marker), top 25 scrollable, with clickable comparison lines.
-  const all = DATA.map(f => {
-    const r = featureClosestForMode(pin, f);
-    return r ? { ...r, f } : null;
-  }).filter(Boolean);
+  // edge or marker), with clickable comparison lines. Both sections respect
+  // the left sidebar's agency filter, so unchecking an agency hides it from
+  // the popup too.
+  const all = DATA
+    .filter(f => active.has(f.properties.eier))
+    .map(f => {
+      const r = featureClosestForMode(pin, f);
+      return r ? { ...r, f } : null;
+    })
+    .filter(Boolean);
   const inside  = all.filter(x => x.inside).slice(0, 5);
   const { buildings, tomter } = outsideRanked(pin);
 
@@ -1605,18 +1679,20 @@ distModeEl.addEventListener('click', e => {
   state.distanceMode = b.dataset.m;
   applyDistMode();
   saveState();
+  refreshPopupsAndLines();
+});
+
+// Re-render pinned lines AND any open popups. Called when any input affects
+// the proximity list — distance-mode flip, agency filter, etc.
+function refreshPopupsAndLines(){
   rebuildAllPinLines();
-  // visibleOutsideEi depends on distanceMode, which changes which features
-  // count as "pinned targets" → re-render so the map reflects the new set.
   render();
-  // Refresh any open popup so distance labels + row data swap immediately.
-  // refreshPinUI handles the post-setPopupContent re-wiring.
   for (const [id, m] of pinMarkers) {
     if (!m.isPopupOpen()) continue;
     const pin = userPins.find(p => p.id === id);
     if (pin) refreshPinUI(pin);
   }
-});
+}
 
 ctxMenu.querySelector('[data-action="add-here"]').addEventListener('click', () => {
   const ll = ctxLatLng;
