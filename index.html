@@ -42,12 +42,13 @@
   };
 </script>
 <script>
-  // FOUC guard: read rail-collapsed from localStorage before first paint so
-  // the sidebar starts in its saved state instead of expanding then snapping
-  // shut on load. Runs synchronously before <body> parses.
+  // FOUC guard: read rail-collapsed states from localStorage before first
+  // paint so the sidebars start in their saved positions instead of
+  // expanding then snapping shut on load. Runs synchronously before <body>.
   try {
     const s = JSON.parse(localStorage.getItem('kombo.v1') || '{}');
     if (s.railCollapsed) document.documentElement.classList.add('rail-collapsed');
+    if (s.railRCollapsed) document.documentElement.classList.add('rail-r-collapsed');
   } catch (e) {}
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -65,6 +66,7 @@
     --c-bygg:#e0a54a;  /* Oslobygg KF */
     --c-bolig:#d4664a; /* Boligbygg Oslo KF */
     --c-havn:#4f7fd6;  /* Oslo Havn KF */
+    --c-pin:#d348a0;   /* User-added pins — outside the four-agency palette */
   }
   @media (prefers-color-scheme: light) {
     :root{
@@ -90,14 +92,27 @@
     background:var(--panel);border-right:1px solid var(--line);
     display:flex;flex-direction:column;overflow:hidden;
     transition:transform .22s ease}
-  /* Pre-applied to <html> by the FOUC-guard <head> script so the rail
-     starts pre-collapsed without animation on load. */
+  /* Right-side companion rail — user-added pins live here. Same shell as
+     #rail, mirrored. */
+  #rail-r{position:absolute;top:0;right:0;bottom:0;width:300px;z-index:500;
+    background:var(--panel);border-left:1px solid var(--line);
+    display:flex;flex-direction:column;overflow:hidden;
+    transition:transform .22s ease}
+  /* Pre-applied to <html> by the FOUC-guard <head> script so the rails
+     start pre-collapsed without animation on load. */
   .rail-collapsed #rail{transform:translateX(-100%)}
-  /* Leaflet's top-left controls (zoom +/-) slide with the rail so they sit
-     just outside the rail's right edge when open, and at the viewport's
-     left edge when collapsed. Same easing as the rail keeps them in sync. */
-  .leaflet-top.leaflet-left{transition:transform .22s ease}
-  html:not(.rail-collapsed) .leaflet-top.leaflet-left{transform:translateX(340px)}
+  .rail-r-collapsed #rail-r{transform:translateX(100%)}
+  /* Leaflet's corner control containers slide with the rails so nothing
+     ever sits hidden under either overlay. Same easing as the rails keeps
+     them in sync. */
+  .leaflet-top.leaflet-left,
+  .leaflet-bottom.leaflet-left{transition:transform .22s ease}
+  html:not(.rail-collapsed) .leaflet-top.leaflet-left,
+  html:not(.rail-collapsed) .leaflet-bottom.leaflet-left{transform:translateX(340px)}
+  .leaflet-top.leaflet-right,
+  .leaflet-bottom.leaflet-right{transition:transform .22s ease}
+  html:not(.rail-r-collapsed) .leaflet-top.leaflet-right,
+  html:not(.rail-r-collapsed) .leaflet-bottom.leaflet-right{transform:translateX(-300px)}
   /* Vertically-centred, just outside the rail's right edge so it can never
      collide with Leaflet's corner controls (zoom topleft, layers topright). */
   #rail-toggle{position:absolute;top:50%;left:340px;transform:translateY(-50%);
@@ -116,6 +131,21 @@
     box-shadow:2px 0 12px rgba(95,182,176,.55), 0 0 0 1px rgba(255,255,255,.18)
   }
   .rail-collapsed #rail-toggle:hover{background:#7cc8c3;color:var(--ground)}
+  /* Right-rail toggle: same shape, mirrored to the rail's left edge. */
+  #rail-r-toggle{position:absolute;top:50%;right:300px;transform:translateY(-50%);
+    z-index:1000;width:22px;height:54px;border-radius:6px 0 0 6px;cursor:pointer;
+    background:var(--panel-2);border:1px solid var(--line);border-right:0;color:var(--muted);
+    font:600 14px/1 Inter;display:flex;align-items:center;justify-content:center;
+    transition:right .18s ease,background .12s ease,color .12s ease;
+    box-shadow:-2px 0 6px rgba(0,0,0,.25)}
+  #rail-r-toggle:hover{background:var(--panel);color:var(--ink)}
+  .rail-r-collapsed #rail-r-toggle{
+    right:0;
+    background:var(--c-pin);color:var(--ground);
+    border-color:var(--c-pin);
+    box-shadow:-2px 0 12px rgba(211,72,160,.55), 0 0 0 1px rgba(255,255,255,.18)
+  }
+  .rail-r-collapsed #rail-r-toggle:hover{background:#dd5fb1;color:var(--ground)}
   header{padding:20px 20px 14px;border-bottom:1px solid var(--line)}
   header .eyebrow{font:600 11px/1 Inter;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
   header h1{margin:6px 0 0;font:600 26px/1.05 'Barlow Condensed',sans-serif;letter-spacing:.01em}
@@ -168,6 +198,39 @@
   .mode-desc.open{display:block}
   .toggle-row{display:flex;align-items:center;gap:8px;margin-top:8px;cursor:pointer;color:var(--ink);font-size:12.5px;line-height:1.2;user-select:none}
   .toggle-row input{margin:0;cursor:pointer;accent-color:var(--c-eby)}
+  /* Right-rail pin-add controls + list */
+  #pin-q{width:100%;background:var(--panel-2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:9px 10px;font:500 13px Inter}
+  #pin-q::placeholder{color:var(--muted)}
+  #pin-suggest{margin-top:6px;display:none}
+  #pin-suggest.open{display:block;background:var(--panel-2);border:1px solid var(--line);border-radius:8px;overflow:hidden;max-height:200px;overflow-y:auto}
+  #pin-suggest .row{padding:7px 10px;cursor:pointer;font-size:12px;border-top:1px solid var(--line)}
+  #pin-suggest .row:first-child{border-top:0}
+  #pin-suggest .row:hover{background:var(--panel)}
+  #pin-suggest .row .sub{color:var(--muted);font-size:11px;margin-top:1px}
+  .seg-btn{flex:1;background:var(--panel-2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:600 12px Inter;cursor:pointer;transition:background .12s,color .12s,border-color .12s}
+  .seg-btn:hover{background:var(--panel);border-color:var(--muted)}
+  .seg-btn.on{background:var(--c-pin);color:var(--ground);border-color:var(--c-pin)}
+  /* Pin list rows */
+  .pin{display:flex;align-items:flex-start;gap:8px;padding:9px 10px;border:1px solid var(--line);border-radius:8px;margin-bottom:5px;background:var(--panel-2);font-size:12px;line-height:1.3}
+  .pin .dot{width:10px;height:10px;border-radius:50%;background:var(--c-pin);flex:none;margin-top:3px}
+  .pin .body{flex:1;min-width:0}
+  .pin .nm{color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pin .sub{color:var(--muted);font-size:11px;margin-top:2px}
+  .pin .acts{display:flex;flex-direction:column;gap:3px;align-items:flex-end}
+  .pin .acts button{appearance:none;background:transparent;border:0;color:var(--muted);font:600 11px/1 Inter;cursor:pointer;padding:2px 4px;border-radius:3px}
+  .pin .acts button:hover{background:var(--panel);color:var(--ink)}
+  .pin .acts .del:hover{color:var(--c-bolig)}
+  #pin-empty{color:var(--muted);font-size:12px;line-height:1.4;padding:8px 0}
+  #map.click-pin-mode{cursor:crosshair !important}
+  #map.click-pin-mode .leaflet-grab{cursor:crosshair !important}
+  /* Sidebar pin row highlight when its map-marker popup is open. */
+  .pin.active{border-color:var(--c-pin);background:var(--panel)}
+  /* Pin popup — proximity rows + delete + the resolved matrikkel line. */
+  .pin-pop .prox-row{display:flex;gap:6px;padding:4px 0;border-top:1px solid var(--line);cursor:default;border-radius:3px;transition:background .08s}
+  .pin-pop .prox-row:hover{background:var(--panel)}
+  .pin-pop .meta{margin-top:4px;color:var(--muted);font-size:11px}
+  .pin-pop .pop-del{display:inline-block;margin-top:8px;color:var(--c-bolig);font-size:11.5px;font-weight:600;text-decoration:none;cursor:pointer;border:0;background:transparent;padding:0;font-family:Inter}
+  .pin-pop .pop-del:hover{text-decoration:underline}
   /* banner */
   #banner{display:none;background:#3a2c12;border:1px solid #6b5220;color:#f0d9a8;
     border-radius:9px;padding:10px 12px;font-size:12px;line-height:1.4;margin-bottom:18px}
@@ -249,6 +312,32 @@
   </aside>
   <div id="map"></div>
   <button id="rail-toggle" type="button" title="Skjul/vis sidepanelet" aria-label="Skjul/vis sidepanelet">‹</button>
+
+  <aside id="rail-r">
+    <header>
+      <div class="eyebrow">Mine punkter</div>
+      <h1>Sammenligning</h1>
+      <p>Legg til en adresse for å se hvor nær den ligger kommunens eiendommer.</p>
+    </header>
+    <div class="scroll">
+      <section>
+        <div class="label">Legg til</div>
+        <form id="pin-form" autocomplete="off">
+          <input id="pin-q" type="text" placeholder="Søk etter adresse …" />
+          <div id="pin-suggest"></div>
+        </form>
+        <div style="display:flex;gap:6px;margin-top:8px">
+          <button id="pin-click-mode" type="button" class="seg-btn" title="Klikk på kartet for å plassere et punkt">Klikk på kart</button>
+        </div>
+      </section>
+
+      <section>
+        <div class="label">Punkter (<span id="pin-count">0</span>)</div>
+        <div id="pin-list"></div>
+      </section>
+    </div>
+  </aside>
+  <button id="rail-r-toggle" type="button" title="Skjul/vis høyre panel" aria-label="Skjul/vis høyre panel">›</button>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
@@ -279,8 +368,9 @@ const active = new Set(DEFAULT_ACTIVE_OWNERS);
 const _sysLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
 let state = {bydel:"", mode:"clusters",
              base: _sysLight ? 'light' : 'dark',
-             center:[59.913,10.74], zoom:11, railCollapsed:false, modeInfoOpen:false,
-             showPolygons:true};
+             center:[59.913,10.74], zoom:11,
+             railCollapsed:false, railRCollapsed:false,
+             modeInfoOpen:false, showPolygons:true};
 let DATA = [];
 
 // ---- localStorage persistence ---------------------------------------------
@@ -299,6 +389,7 @@ function loadState(){
     }
     if(typeof s.zoom === 'number' && s.zoom >= 0 && s.zoom <= 22) state.zoom = s.zoom;
     if(typeof s.railCollapsed === 'boolean') state.railCollapsed = s.railCollapsed;
+    if(typeof s.railRCollapsed === 'boolean') state.railRCollapsed = s.railRCollapsed;
     if(typeof s.modeInfoOpen === 'boolean') state.modeInfoOpen = s.modeInfoOpen;
     if(typeof s.showPolygons === 'boolean') state.showPolygons = s.showPolygons;
     if(Array.isArray(s.active)){
@@ -315,7 +406,8 @@ function saveState(){
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       bydel: state.bydel, mode: state.mode, base: state.base, active: [...active],
       center: state.center, zoom: state.zoom,
-      railCollapsed: state.railCollapsed, modeInfoOpen: state.modeInfoOpen,
+      railCollapsed: state.railCollapsed, railRCollapsed: state.railRCollapsed,
+      modeInfoOpen: state.modeInfoOpen,
       showPolygons: state.showPolygons,
     }));
   }catch(e){ /* private mode etc. */ }
@@ -634,6 +726,427 @@ document.getElementById('mode').addEventListener('click',e=>{
   state.mode=b.dataset.m; applyModeUi(); saveState(); render();
 });
 
+// ============================================================================
+// Right rail — user-added pins
+// ============================================================================
+
+// Collapse/expand the right rail. Mirrors the left rail; class lives on
+// <html> for the FOUC-guard pattern.
+const railRToggle = document.getElementById('rail-r-toggle');
+function applyRailRState(){
+  document.documentElement.classList.toggle('rail-r-collapsed', state.railRCollapsed);
+  railRToggle.textContent = state.railRCollapsed ? '‹' : '›';
+}
+applyRailRState();
+railRToggle.addEventListener('click', () => {
+  state.railRCollapsed = !state.railRCollapsed;
+  applyRailRState();
+  saveState();
+});
+
+// Persisted user pins. Separate key from the rest of the UI state since
+// they're domain data, not UI preferences.
+const PINS_KEY = 'kombo.userPins.v1';
+let userPins = [];                     // [{id, lat, lon, label}]
+const pinMarkers = new Map();          // id → L.Marker
+const userPinLayer = L.layerGroup().addTo(map);
+
+function loadPins(){
+  try { userPins = JSON.parse(localStorage.getItem(PINS_KEY) || '[]'); }
+  catch(e){ userPins = []; }
+}
+function savePins(){
+  try { localStorage.setItem(PINS_KEY, JSON.stringify(userPins)); } catch(e){}
+}
+
+// User-pin marker style — a contrasting circle outlined in the page ink so
+// it can never be confused with a kommune marker (which is a coloured dot).
+function userPinIcon(){
+  return L.divIcon({className:'',iconSize:[20,20],
+    html:`<div style="width:20px;height:20px;border-radius:50%;
+      background:var(--c-pin);border:2px solid var(--ink);
+      box-shadow:0 0 0 2px var(--halo), 0 2px 6px var(--halo-glow)"></div>`});
+}
+
+function pinPopupHTML(pin){
+  // 5 nearest kommune features by distance from the pin to each feature's
+  // anchor (Geonorge address point if present, else first polygon vertex).
+  const here = L.latLng(pin.lat, pin.lon);
+  const ranked = DATA.map(f => {
+    const a = featureAnchor(f); if (!a) return null;
+    return { d: here.distanceTo([a[1], a[0]]), a, f };
+  }).filter(Boolean).sort((x,y) => x.d - y.d).slice(0, 5);
+
+  const rows = ranked.map(({d, a, f}) => {
+    const p = f.properties;
+    const c = colorOf(p.eier);
+    const dist = d < 1000 ? `${Math.round(d)} m` : `${(d/1000).toFixed(1)} km`;
+    const title = p.adresse || p.bruksnavn || p.eiendom;
+    return `<div class="prox-row" data-anchor="${a[0]},${a[1]}">
+      <span style="width:8px;height:8px;border-radius:50%;background:${c};flex:none;margin-top:5px"></span>
+      <span style="flex:1;min-width:0">
+        <span style="color:var(--ink)">${title}</span><br>
+        <span class="pk" style="font-size:11px">${p.eier}</span>
+      </span>
+      <span class="pk" style="font-variant-numeric:tabular-nums">${dist}</span>
+    </div>`;
+  }).join('');
+
+  const head = pin.label
+    ? `<b>${pin.label}</b><br><span class="pk">${pin.lat.toFixed(5)}, ${pin.lon.toFixed(5)}</span>`
+    : `<b>Punkt</b><br><span class="pk">${pin.lat.toFixed(5)}, ${pin.lon.toFixed(5)}</span>`;
+
+  const matr = pin.matrikkel
+    ? `<div class="meta">Matrikkel: ${pin.matrikkel.knr || ''}-${pin.matrikkel.gnr}/${pin.matrikkel.bnr}${pin.teig ? ' · tomtegrense vist' : ''}</div>`
+    : (pin.label ? '<div class="meta">Henter matrikkel og tomtegrense …</div>' : '');
+
+  return `<div class="pin-pop">
+    ${head}
+    ${matr}
+    <div style="margin-top:8px;font-size:11.5px;line-height:1.4">
+      <div class="pk" style="margin-bottom:2px">Nærmeste kommunale eiendommer:</div>
+      ${rows || '<span class="pk">(ingen i utvalget — sjekk filtrene)</span>'}
+    </div>
+    <button class="pop-del" data-id="${pin.id}">Slett punkt</button>
+  </div>`;
+}
+
+// Hover-line from pin to a proximity row's feature. Single shared polyline —
+// re-drawn each hover, removed on mouseleave or popup close.
+const HOVER_COLOR = '#d348a0';  // matches --c-pin (Leaflet polyline can't read CSS vars)
+let hoverLine = null;
+function showHoverLine(pin, anchor){
+  hideHoverLine();
+  hoverLine = L.polyline(
+    [[pin.lat, pin.lon], [anchor[1], anchor[0]]],
+    {color: HOVER_COLOR, weight: 2, dashArray: '4 5', opacity: 0.9, interactive: false}
+  ).addTo(map);
+}
+function hideHoverLine(){
+  if (hoverLine) { map.removeLayer(hoverLine); hoverLine = null; }
+}
+
+// Highlight the sidebar row matching the currently-active marker.
+function highlightSidebarPin(id){
+  document.querySelectorAll('.pin').forEach(el =>
+    el.classList.toggle('active', el.dataset.id === id));
+  if (id) {
+    document.querySelector(`.pin[data-id="${id}"]`)
+      ?.scrollIntoView({block:'nearest', behavior:'smooth'});
+  }
+}
+
+function renderPinMarker(pin){
+  const m = L.marker([pin.lat, pin.lon], {icon: userPinIcon()});
+  m.bindPopup(() => pinPopupHTML(pin), {maxWidth: 320, className: 'pin-popup'});
+  m.on('popupopen', e => {
+    const root = e.popup.getElement();
+    if (!root) return;
+    // Highlight the sidebar row matching this pin.
+    highlightSidebarPin(pin.id);
+    // Hover-line from this pin to each proximity row's feature.
+    root.querySelectorAll('.prox-row').forEach(row => {
+      row.addEventListener('mouseenter', () => {
+        const [lon, lat] = row.dataset.anchor.split(',').map(parseFloat);
+        showHoverLine(pin, [lon, lat]);
+      });
+      row.addEventListener('mouseleave', hideHoverLine);
+    });
+    // In-popup delete button.
+    const delBtn = root.querySelector('.pop-del');
+    if (delBtn) {
+      delBtn.addEventListener('click', () => {
+        m.closePopup();
+        deletePin(pin.id);
+      });
+    }
+  });
+  m.on('popupclose', () => {
+    hideHoverLine();
+    highlightSidebarPin(null);
+  });
+  m.addTo(userPinLayer);
+  pinMarkers.set(pin.id, m);
+}
+
+function renderPinList(){
+  const el = document.getElementById('pin-list');
+  document.getElementById('pin-count').textContent = String(userPins.length);
+  if (!userPins.length){
+    el.innerHTML = `<div id="pin-empty">Ingen punkter ennå. Søk etter en adresse over, eller bytt til <i>Klikk på kart</i> og klikk hvor som helst.</div>`;
+    return;
+  }
+  el.innerHTML = userPins.map(p => `
+    <div class="pin" data-id="${p.id}">
+      <span class="dot"></span>
+      <div class="body">
+        <div class="nm">${p.label || 'Punkt'}</div>
+        <div class="sub">${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}</div>
+      </div>
+      <div class="acts">
+        <button class="focus" data-id="${p.id}" title="Sentrér kartet og åpne popup">Vis</button>
+        <button class="del"   data-id="${p.id}" title="Fjern punktet">Slett</button>
+      </div>
+    </div>`).join('');
+}
+
+function addPin({lat, lon, label, matrikkel}){
+  const pin = {
+    id: 'p-' + Date.now().toString(36) + '-' + Math.floor(Math.random()*1e4).toString(36),
+    lat, lon,
+    label: label || null,
+    matrikkel: matrikkel || null,
+    teig: null,
+  };
+  userPins.push(pin);
+  savePins();
+  renderPinMarker(pin);
+  renderPinList();
+  // Kick off the async enrichment — reverse-geocode for address+matrikkel
+  // if missing, then fetch the Kartverket Teig polygon for that matrikkel.
+  enrichPin(pin);
+  return pin;
+}
+function deletePin(id){
+  userPins = userPins.filter(p => p.id !== id);
+  const m = pinMarkers.get(id);
+  if (m) { userPinLayer.removeLayer(m); pinMarkers.delete(id); }
+  const tl = pinTeigLayers.get(id);
+  if (tl) { userTeigLayer.removeLayer(tl); pinTeigLayers.delete(id); }
+  savePins();
+  renderPinList();
+}
+
+// ---------------------------------------------------------------------------
+// Pin enrichment — reverse-geocode + Teig polygon
+// ---------------------------------------------------------------------------
+
+// Layer + map to render parcel polygons for user pins. One sub-layer per pin
+// so deletePin can drop it cleanly.
+const userTeigLayer = L.layerGroup().addTo(map);
+const pinTeigLayers = new Map();
+
+function renderPinTeig(pin){
+  // Replace any existing layer for this pin.
+  const existing = pinTeigLayers.get(pin.id);
+  if (existing) { userTeigLayer.removeLayer(existing); pinTeigLayers.delete(pin.id); }
+  if (!pin.teig) return;
+  const layer = L.geoJSON(pin.teig, {
+    interactive: false,
+    style: () => ({
+      color: HOVER_COLOR, fillColor: HOVER_COLOR,
+      fillOpacity: 0.18, weight: 2, opacity: 0.9, dashArray: '4 5',
+    }),
+  });
+  userTeigLayer.addLayer(layer);
+  pinTeigLayers.set(pin.id, layer);
+}
+
+async function reverseGeocode(lat, lon){
+  try {
+    const url = `https://ws.geonorge.no/adresser/v1/punktsok?lat=${lat}&lon=${lon}&radius=50&treffPerSide=1&utkoordsys=4326`;
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    const data = await r.json();
+    const a = (data.adresser || [])[0];
+    if (!a) return null;
+    return {
+      label: `${a.adressetekst}${a.postnummer ? `, ${a.postnummer} ${a.poststed || ''}` : ''}`,
+      matrikkel: {
+        knr: a.kommunenummer,
+        gnr: a.gardsnummer,
+        bnr: a.bruksnummer,
+      },
+    };
+  } catch(e){ return null; }
+}
+
+// Parse a Kartverket Teig GML response into GeoJSON Polygon/MultiPolygon.
+// Same shape as the Python parse_teig_response() in geocode.py, just DOM-based.
+const GML_NS = 'http://www.opengis.net/gml/3.2';
+function parseTeigGML(xmlText){
+  const doc = new DOMParser().parseFromString(xmlText, 'application/xml');
+  if (doc.getElementsByTagName('parsererror').length) return null;
+  const polygons = [];
+  const polyEls = doc.getElementsByTagNameNS(GML_NS, 'Polygon');
+  for (const poly of polyEls) {
+    const ext = poly.getElementsByTagNameNS(GML_NS, 'exterior')[0];
+    if (!ext) continue;
+    const extPos = ext.getElementsByTagNameNS(GML_NS, 'posList')[0];
+    if (!extPos || !extPos.textContent) continue;
+    const rings = [parsePosList(extPos.textContent)];
+    for (const intEl of poly.getElementsByTagNameNS(GML_NS, 'interior')) {
+      const ip = intEl.getElementsByTagNameNS(GML_NS, 'posList')[0];
+      if (ip && ip.textContent) rings.push(parsePosList(ip.textContent));
+    }
+    polygons.push(rings);
+  }
+  if (!polygons.length) return null;
+  if (polygons.length === 1) return {type: 'Polygon', coordinates: polygons[0]};
+  return {type: 'MultiPolygon', coordinates: polygons};
+}
+function parsePosList(text){
+  // GML posList is "lat1 lon1 lat2 lon2 …". GeoJSON wants [lon, lat].
+  const nums = text.trim().split(/\s+/);
+  const ring = [];
+  for (let i = 0; i < nums.length - 1; i += 2) {
+    ring.push([parseFloat(nums[i+1]), parseFloat(nums[i])]);
+  }
+  return ring;
+}
+
+async function fetchTeig(knr, gnr, bnr){
+  const filterXml =
+    `<fes:Filter xmlns:fes="http://www.opengis.net/fes/2.0" ` +
+    `xmlns:app="http://skjema.geonorge.no/SOSI/produktspesifikasjon/Matrikkelen-Eiendomskart-Teig/20211101">` +
+    `<fes:And>` +
+      `<fes:PropertyIsEqualTo><fes:ValueReference>app:kommunenummer</fes:ValueReference><fes:Literal>${knr}</fes:Literal></fes:PropertyIsEqualTo>` +
+      `<fes:PropertyIsEqualTo><fes:ValueReference>app:matrikkelnummerTekst</fes:ValueReference><fes:Literal>${gnr}/${bnr}</fes:Literal></fes:PropertyIsEqualTo>` +
+    `</fes:And></fes:Filter>`;
+  const params = new URLSearchParams({
+    service: 'WFS', version: '2.0.0', request: 'GetFeature',
+    typeNames: 'app:Teig',
+    srsName: 'urn:ogc:def:crs:EPSG::4326',
+    count: '200',
+    filter: filterXml,
+  });
+  try {
+    const r = await fetch(`https://wfs.geonorge.no/skwms1/wfs.matrikkelen-eiendomskart-teig?${params}`);
+    if (!r.ok) return null;
+    return parseTeigGML(await r.text());
+  } catch(e){ return null; }
+}
+
+// Re-render popup content if open, refresh sidebar, persist.
+function refreshPinUI(pin){
+  savePins();
+  renderPinList();
+  const m = pinMarkers.get(pin.id);
+  if (m && m.isPopupOpen()) m.setPopupContent(pinPopupHTML(pin));
+}
+
+async function enrichPin(pin){
+  // (1) Reverse-geocode for label + matrikkel if missing.
+  if (!pin.matrikkel || !pin.label) {
+    const r = await reverseGeocode(pin.lat, pin.lon);
+    if (r) {
+      pin.label = pin.label || r.label;
+      pin.matrikkel = pin.matrikkel || r.matrikkel;
+      refreshPinUI(pin);
+    }
+  }
+  // (2) Teig polygon for the matrikkel if missing.
+  if (pin.matrikkel && !pin.teig) {
+    const teig = await fetchTeig(pin.matrikkel.knr, pin.matrikkel.gnr, pin.matrikkel.bnr);
+    if (teig) {
+      pin.teig = teig;
+      renderPinTeig(pin);
+      refreshPinUI(pin);
+    }
+  }
+}
+
+// List actions (focus + delete)
+document.getElementById('pin-list').addEventListener('click', e => {
+  const btn = e.target.closest('button');
+  if (!btn) return;
+  const id = btn.dataset.id;
+  const pin = userPins.find(p => p.id === id);
+  if (!pin) return;
+  if (btn.classList.contains('focus')) {
+    map.flyTo([pin.lat, pin.lon], Math.max(map.getZoom(), 16), {duration:0.6});
+    setTimeout(() => pinMarkers.get(id)?.openPopup(), 700);
+  } else if (btn.classList.contains('del')) {
+    deletePin(id);
+  }
+});
+
+// "Click on map" mode — toggles a crosshair cursor and arms a single click.
+let pinClickMode = false;
+const pinClickBtn = document.getElementById('pin-click-mode');
+function setPinClickMode(on){
+  pinClickMode = !!on;
+  pinClickBtn.classList.toggle('on', pinClickMode);
+  document.getElementById('map').classList.toggle('click-pin-mode', pinClickMode);
+}
+pinClickBtn.addEventListener('click', () => setPinClickMode(!pinClickMode));
+map.on('click', e => {
+  if (!pinClickMode) return;
+  const pin = addPin({lat: e.latlng.lat, lon: e.latlng.lng, label: null});
+  setPinClickMode(false);
+  setTimeout(() => pinMarkers.get(pin.id)?.openPopup(), 50);
+});
+
+// Address search — debounced suggestion list from Geonorge.
+let searchTimer = null;
+const searchInput = document.getElementById('pin-q');
+const searchSuggest = document.getElementById('pin-suggest');
+searchInput.addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  const q = searchInput.value.trim();
+  if (q.length < 3) {
+    searchSuggest.classList.remove('open');
+    searchSuggest.innerHTML = '';
+    return;
+  }
+  searchTimer = setTimeout(() => doSearch(q), 250);
+});
+document.getElementById('pin-form').addEventListener('submit', e => {
+  e.preventDefault();
+  const first = searchSuggest.querySelector('.row[data-pickable="1"]');
+  if (first) first.click();
+});
+async function doSearch(q){
+  try {
+    const params = new URLSearchParams({
+      sok: q, kommunenummer: '0301',
+      treffPerSide: '8', utkoordsys: '4326',
+    });
+    const r = await fetch(`https://ws.geonorge.no/adresser/v1/sok?${params}`);
+    const data = await r.json();
+    const addrs = (data.adresser || []).filter(a => a.representasjonspunkt);
+    if (!addrs.length){
+      searchSuggest.innerHTML = `<div class="row"><span class="pk">Ingen treff</span></div>`;
+      searchSuggest.classList.add('open');
+      return;
+    }
+    searchSuggest.innerHTML = addrs.map((a, i) =>
+      `<div class="row" data-pickable="1" data-i="${i}">
+        <div>${a.adressetekst}</div>
+        <div class="sub">${a.postnummer || ''} ${a.poststed || ''}</div>
+      </div>`).join('');
+    searchSuggest.classList.add('open');
+    searchSuggest.querySelectorAll('.row[data-pickable="1"]').forEach(row => {
+      row.addEventListener('click', () => {
+        const a = addrs[+row.dataset.i];
+        const rp = a.representasjonspunkt;
+        const label = `${a.adressetekst}${a.postnummer ? `, ${a.postnummer} ${a.poststed || ''}` : ''}`;
+        // Search response already carries the matrikkel, so the enrich step
+        // can skip the reverse-geocode and jump straight to fetching the Teig.
+        const matrikkel = {
+          knr: a.kommunenummer,
+          gnr: a.gardsnummer,
+          bnr: a.bruksnummer,
+        };
+        const pin = addPin({lat: rp.lat, lon: rp.lon, label, matrikkel});
+        map.flyTo([rp.lat, rp.lon], Math.max(map.getZoom(), 16), {duration:0.6});
+        setTimeout(() => pinMarkers.get(pin.id)?.openPopup(), 700);
+        searchInput.value = '';
+        searchSuggest.classList.remove('open');
+        searchSuggest.innerHTML = '';
+      });
+    });
+  } catch(e) {
+    searchSuggest.innerHTML = `<div class="row"><span class="pk">Feil ved søk</span></div>`;
+    searchSuggest.classList.add('open');
+  }
+}
+
+// Dismiss suggestion list when clicking elsewhere.
+document.addEventListener('click', e => {
+  if (!e.target.closest('#pin-form')) searchSuggest.classList.remove('open');
+});
+
 // ---- sample fallback so the map renders before geocode.py is run ----
 const SAMPLE = {type:"FeatureCollection",features:[
   feat(10.6695,59.9255,"0301-10/68/0/0","Lilleakerveien 49","Ullern","Oslobygg KF","Lilleaker skole",6112.5),
@@ -686,6 +1199,11 @@ async function boot(){
   DATA=fc.features;
   buildBydel();
   render();
+  // User pins survive reload. Render them after DATA is loaded so the
+  // proximity popup has features to rank against.
+  loadPins();
+  userPins.forEach(renderPinMarker);
+  renderPinList();
 }
 boot();
 </script>
