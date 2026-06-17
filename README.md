@@ -1,4 +1,7 @@
-# kombo — Oslo kommunes eiendommer på kart
+# KomBo — Oslo kommunes eiendommer på kart
+
+> **KomBo** (fra «kommunale boliger») — navnet stammer fra boligfokuset, men
+> kartet viser i dag *alle* fire kommunale etater (EBY, Oslobygg, Boligbygg, Havn).
 
 A two-step pipeline that maps **every property Oslo kommune owns** — across all
 four municipal bodies: from rental housing to schools, from road parcels to the
