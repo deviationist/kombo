@@ -365,7 +365,11 @@ function popup(p, anchor){
   const sv = anchor
     ? `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${anchor[1]},${anchor[0]}`
     : null;
-  return `<b>${p.adresse || p.bruksnavn || p.eiendom}</b><br>
+  // "0284 OSLO" line under the street address — only when Geonorge gave us
+  // both fields. Falls back silently for parcels with no registered address.
+  const post = (p.postnummer && p.poststed) ? `${p.postnummer} ${p.poststed}` : '';
+  return `<b>${p.adresse || p.bruksnavn || p.eiendom}</b>
+    ${post ? `<div class="pk" style="margin-top:2px">${post}</div>` : '<br>'}
     <span class="pk">Matrikkel</span> ${p.eiendom}<br>
     <span class="pk">Eier</span> ${p.eier}<br>
     ${p.bydel?`<span class="pk">Bydel</span> ${p.bydel}<br>`:''}

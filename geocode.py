@@ -91,12 +91,10 @@ def parse_matrikkel(value):
 
 
 def open_cache(path="geocode_cache.sqlite"):
-    """Open the SQLite geocode cache. Cache schema v2 decouples the two
-    resolvers via separate addr_source / geom_source columns, so we can
-    independently track "attempted Geonorge", "got an address", "attempted
-    Teig", "got a polygon" — instead of overloading one `source` field.
-
-    Migrates v1 caches in place.
+    """Open the SQLite geocode cache. Cache schema v3 carries the same v2
+    addr_source / geom_source split, plus postnummer + poststed pulled from
+    the Geonorge response (so the popup can show "Lilleakerveien 49, 0284
+    OSLO" instead of just the street). Migrates v1/v2 caches in place.
     """
     con = sqlite3.connect(path)
     con.execute("""
@@ -108,6 +106,8 @@ def open_cache(path="geocode_cache.sqlite"):
             geometry_json TEXT,
             addr_source TEXT,         -- NULL | 'geonorge_adresse' | 'none'
             geom_source TEXT,         -- NULL | 'kartverket_teig' | 'none'
+            postnummer TEXT,          -- 4-digit ZIP, from Geonorge
+            poststed TEXT,            -- postal area name, from Geonorge
             PRIMARY KEY (gnr, bnr)
         )
     """)
@@ -118,6 +118,10 @@ def open_cache(path="geocode_cache.sqlite"):
         con.execute("ALTER TABLE geo ADD COLUMN addr_source TEXT")
     if "geom_source" not in cols:
         con.execute("ALTER TABLE geo ADD COLUMN geom_source TEXT")
+    if "postnummer" not in cols:
+        con.execute("ALTER TABLE geo ADD COLUMN postnummer TEXT")
+    if "poststed" not in cols:
+        con.execute("ALTER TABLE geo ADD COLUMN poststed TEXT")
     # One-time v1 → v2 backfill of addr_source / geom_source from the legacy
     # `source` field. v1 source values:
     #   'geonorge_adresse' → Geonorge succeeded, Teig never attempted
@@ -142,25 +146,29 @@ def open_cache(path="geocode_cache.sqlite"):
 
 
 def cache_get(con, gnr, bnr):
-    """Return (lat, lon, adressetekst, addr_source, geom_source, geometry_json)
-    or None.
+    """Return (lat, lon, adressetekst, addr_source, geom_source, geometry_json,
+    postnummer, poststed) or None.
     """
     row = con.execute(
-        "SELECT lat, lon, adressetekst, addr_source, geom_source, geometry_json "
+        "SELECT lat, lon, adressetekst, addr_source, geom_source, geometry_json, "
+        "       postnummer, poststed "
         "FROM geo WHERE gnr=? AND bnr=?",
         (gnr, bnr)).fetchone()
     return row
 
 
 def cache_put(con, gnr, bnr, *, lat=None, lon=None, adressetekst=None,
-              addr_source=None, geom_source=None, geometry_json=None):
+              addr_source=None, geom_source=None, geometry_json=None,
+              postnummer=None, poststed=None):
     """Insert or replace a cache row. All fields are kwargs to make call sites
     self-documenting."""
     con.execute(
         "INSERT OR REPLACE INTO geo "
-        "(gnr, bnr, lat, lon, adressetekst, addr_source, geom_source, geometry_json) "
-        "VALUES (?,?,?,?,?,?,?,?)",
-        (gnr, bnr, lat, lon, adressetekst, addr_source, geom_source, geometry_json))
+        "(gnr, bnr, lat, lon, adressetekst, addr_source, geom_source, "
+        " geometry_json, postnummer, poststed) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (gnr, bnr, lat, lon, adressetekst, addr_source, geom_source,
+         geometry_json, postnummer, poststed))
     con.commit()
 
 
@@ -246,7 +254,8 @@ def kartverket_teig_lookup(gnr, bnr, session):
 
 
 def geonorge_lookup(gnr, bnr, session):
-    """Return (lat, lon, adressetekst) or (None, None, None)."""
+    """Return (lat, lon, adressetekst, postnummer, poststed) or 5×None."""
+    NONE_TUPLE = (None, None, None, None, None)
     params = {
         "kommunenummer": KOMMUNE,
         "gardsnummer": gnr,
@@ -260,24 +269,30 @@ def geonorge_lookup(gnr, bnr, session):
             if r.status_code == 200:
                 addrs = r.json().get("adresser", [])
                 if not addrs:
-                    return (None, None, None)
+                    return NONE_TUPLE
                 # Average the representation points of all matching addresses
                 # so a large multi-address parcel lands near its centre.
                 pts = [a["representasjonspunkt"] for a in addrs
                        if a.get("representasjonspunkt")]
                 if not pts:
-                    return (None, None, None)
+                    return NONE_TUPLE
                 lat = sum(p["lat"] for p in pts) / len(pts)
                 lon = sum(p["lon"] for p in pts) / len(pts)
-                txt = addrs[0].get("adressetekst") or ""
-                return (lat, lon, txt)
+                # Use the first address for the human-readable fields. All
+                # matches for a (gnr, bnr) usually share the same postal area;
+                # in the rare cases they don't, "first" is good enough.
+                first = addrs[0]
+                txt = first.get("adressetekst") or ""
+                postnummer = first.get("postnummer") or None
+                poststed   = first.get("poststed") or None
+                return (lat, lon, txt, postnummer, poststed)
             if r.status_code in (429, 500, 502, 503, 504):
                 time.sleep(1.5 * (attempt + 1))
                 continue
-            return (None, None, None)
+            return NONE_TUPLE
         except requests.RequestException:
             time.sleep(1.5 * (attempt + 1))
-    return (None, None, None)
+    return NONE_TUPLE
 
 
 def main():
@@ -316,17 +331,20 @@ def main():
     done = 0
     addr_hits = poly_hits = both = neither = 0
     for gnr, bnr in pairs:
-        row = cache_get(con, gnr, bnr) or (None,) * 6
-        lat, lon, txt, addr_src, geom_src, geom_json = row
+        row = cache_get(con, gnr, bnr) or (None,) * 8
+        lat, lon, txt, addr_src, geom_src, geom_json, postnr, poststed = row
 
-        # 1. Geonorge address lookup — only if never attempted for this pair.
-        if addr_src is None:
-            lat, lon, txt = geonorge_lookup(gnr, bnr, session)
+        # 1. Geonorge address lookup — call if we've never tried, OR if we
+        # have an addressed cache row from before postnummer/poststed were
+        # captured (v2 → v3 backfill, no extra row state needed).
+        if addr_src is None or (addr_src == "geonorge_adresse" and postnr is None):
+            lat, lon, txt, postnr, poststed = geonorge_lookup(gnr, bnr, session)
             addr_src = "geonorge_adresse" if lat is not None else "none"
             cache_put(con, gnr, bnr,
                       lat=lat, lon=lon, adressetekst=txt,
                       addr_source=addr_src, geom_source=geom_src,
-                      geometry_json=geom_json)
+                      geometry_json=geom_json,
+                      postnummer=postnr, poststed=poststed)
             time.sleep(SLEEP)
 
         # 2. Kartverket Teig WFS — also always attempted now, so the user can
@@ -339,7 +357,8 @@ def main():
             cache_put(con, gnr, bnr,
                       lat=lat, lon=lon, adressetekst=txt,
                       addr_source=addr_src, geom_source=geom_src,
-                      geometry_json=geom_json)
+                      geometry_json=geom_json,
+                      postnummer=postnr, poststed=poststed)
             time.sleep(TEIG_SLEEP)
 
         has_addr = addr_src == "geonorge_adresse"
@@ -382,9 +401,17 @@ def main():
         row = cache_get(con, p["gnr"], p["bnr"]) if p else None
         if not row:
             missing.append(props); continue
-        lat, lon, _adr, addr_src, geom_src, geom_json = row
+        lat, lon, _adr, addr_src, geom_src, geom_json, postnr, poststed = row
         has_poly = geom_src == "kartverket_teig" and geom_json
         has_addr = addr_src == "geonorge_adresse" and lat is not None
+
+        # Carry the full Geonorge-resolved address into every feature when
+        # we have one — the popup can format it as "Lilleakerveien 49,
+        # 0284 OSLO" without doing a second lookup.
+        if postnr:
+            props["postnummer"] = postnr
+        if poststed:
+            props["poststed"] = poststed
 
         if has_poly:
             geom = json.loads(geom_json)
