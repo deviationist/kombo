@@ -457,7 +457,30 @@ def main():
         else:
             missing.append(props)
 
-    fc = {"type": "FeatureCollection", "features": features}
+    # Extract the kommune-published vintage from the XLSX filename (e.g.
+    # "Oversikt-over-Oslo-kommunes-eiendommer-mai-2026_nett-2.xlsx" →
+    # "mai 2026") so the map header can show it without anyone hand-editing
+    # index.html every six months when the kommune republishes.
+    MONTHS_NO = ("januar", "februar", "mars", "april", "mai", "juni",
+                 "juli", "august", "september", "oktober", "november", "desember")
+    vintage = None
+    m = re.search(
+        r"(" + "|".join(MONTHS_NO) + r")[-_ ]?(\d{4})",
+        xlsx.name, flags=re.IGNORECASE)
+    if m:
+        vintage = f"{m.group(1).lower()} {m.group(2)}"
+
+    fc = {
+        "type": "FeatureCollection",
+        "metadata": {
+            "vintage": vintage,           # e.g. "mai 2026", or null if not found
+            "sourceFile": xlsx.name,
+            "generatedAt": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(timespec="seconds"),
+            "totalRows": len(features) + len(missing),   # = XLSX rows actually present
+            "located": len(features),
+        },
+        "features": features,
+    }
     Path("eiendommer.geojson").write_text(
         json.dumps(fc, ensure_ascii=False), encoding="utf-8")
 
