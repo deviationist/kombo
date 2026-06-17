@@ -229,6 +229,9 @@
   .pin-pop .prox-row{display:flex;gap:6px;padding:4px 6px;margin:0 -6px;border-top:1px solid var(--line);cursor:pointer;border-radius:3px;transition:background .08s,box-shadow .08s}
   .pin-pop .prox-row:hover{background:var(--panel)}
   .pin-pop .prox-row.pinned{background:var(--panel);box-shadow:inset 3px 0 0 var(--c-pin)}
+  /* Context-only "you are inside" rows. No hover, no click, no distance. */
+  .pin-pop .inside-row{display:flex;gap:6px;padding:4px 6px;margin:0 -6px;
+    border-top:1px solid var(--line);font-size:11.5px;line-height:1.4}
   /* Distance label that sits at the centre of each pinned comparison line. */
   .leaflet-tooltip.pin-line-label{
     background:var(--c-pin);color:#ffffff;
@@ -533,6 +536,18 @@ function parseMatrikkel(eiendom){
 function grunnbokenUrl(knr, gnr, bnr){
   return `https://eiendomsregisteret.kartverket.no/eiendom/${knr}/${gnr}/${bnr}`;
 }
+// "Uregistrert grunn" is the kommune's catch-all for ~unmapped land — used
+// for ~1,800 rows. Skip it as a title and fall back to the matrikkel.
+const GENERIC_BRUKSNAVN = new Set(['Uregistrert grunn', '']);
+function featureTitle(p){
+  const a = (p.adresse || '').trim();
+  if (a) return a;
+  const b = (p.bruksnavn || '').trim();
+  if (b && !GENERIC_BRUKSNAVN.has(b)) return b;
+  const m = parseMatrikkel(p.eiendom);
+  if (m) return `Eiendom ${m.gnr}/${m.bnr}`;
+  return p.eiendom || '(uten navn)';
+}
 
 function popup(p, anchor){
   const sv = anchor
@@ -543,12 +558,12 @@ function popup(p, anchor){
   // "0284 OSLO" line under the street address — only when Geonorge gave us
   // both fields. Falls back silently for parcels with no registered address.
   const post = (p.postnummer && p.poststed) ? `${p.postnummer} ${p.poststed}` : '';
-  return `<b>${p.adresse || p.bruksnavn || p.eiendom}</b>
+  return `<b>${featureTitle(p)}</b>
     ${post ? `<div class="pk" style="margin-top:2px">${post}</div>` : '<br>'}
     <span class="pk">Matrikkel</span> ${p.eiendom}<br>
     <span class="pk">Eier</span> ${p.eier}<br>
     ${p.bydel?`<span class="pk">Bydel</span> ${p.bydel}<br>`:''}
-    ${p.bruksnavn?`<span class="pk">Bruksnavn</span> ${p.bruksnavn}<br>`:''}
+    ${p.bruksnavn && !GENERIC_BRUKSNAVN.has(p.bruksnavn.trim())?`<span class="pk">Bruksnavn</span> ${p.bruksnavn}<br>`:''}
     ${p.areal!=null?`<span class="pk">Areal</span> ${fmt(Math.round(p.areal))} m²`:''}
     <div style="margin-top:6px">
       ${sv?`<a class="sv-link" href="${sv}" target="_blank" rel="noopener">Street View ↗</a>`:''}
@@ -818,26 +833,39 @@ function userPinIcon(){
 }
 
 function pinPopupHTML(pin){
-  // 5 nearest kommune features by *true* point-to-polygon distance — for
-  // polygons that's the minimum distance to any edge segment (0 if inside);
-  // for points, the geodesic distance to the point.
-  const ranked = DATA.map(f => {
-    const r = geometryClosest(pin.lat, pin.lon, f.geometry);
-    return { d: r.dist, closest: r.closest, f };
-  }).sort((x,y) => x.d - y.d).slice(0, 5);
+  // Two sections: features the pin is INSIDE get a short contextual list (no
+  // distance — distance to a property you're standing on isn't interesting).
+  // Features OUTSIDE the pin are ranked by edge-distance, top 5 — those are
+  // the meaningful "nearest neighbours" with clickable comparison lines.
+  const all = DATA.map(f => ({
+    ...geometryClosest(pin.lat, pin.lon, f.geometry), f
+  }));
+  const inside  = all.filter(x => x.inside).slice(0, 5);
+  const outside = all.filter(x => !x.inside).sort((a,b) => a.dist - b.dist).slice(0, 5);
 
-  const rows = ranked.map(({d, closest, f}) => {
+  const insideRows = inside.map(({f}) => {
     const p = f.properties;
     const c = colorOf(p.eier);
-    const dist = d < 1 ? 'innenfor' : (d < 1000 ? `${Math.round(d)} m` : `${(d/1000).toFixed(1)} km`);
-    const title = p.adresse || p.bruksnavn || p.eiendom;
-    return `<div class="prox-row" data-closest="${closest[0]},${closest[1]}" title="Klikk for å feste linjen">
+    return `<div class="inside-row">
       <span style="width:8px;height:8px;border-radius:50%;background:${c};flex:none;margin-top:5px"></span>
       <span style="flex:1;min-width:0">
-        <span style="color:var(--ink)">${title}</span><br>
+        <span style="color:var(--ink)">${featureTitle(p)}</span><br>
         <span class="pk" style="font-size:11px">${p.eier}</span>
       </span>
-      <span class="pk" style="font-variant-numeric:tabular-nums">${dist}</span>
+    </div>`;
+  }).join('');
+
+  const proxRows = outside.map(({dist, closest, f}) => {
+    const p = f.properties;
+    const c = colorOf(p.eier);
+    const distLbl = dist < 1000 ? `${Math.round(dist)} m` : `${(dist/1000).toFixed(1)} km`;
+    return `<div class="prox-row" data-closest="${closest[0]},${closest[1]}" title="Klikk for å feste linjen til nærmeste tomtekant">
+      <span style="width:8px;height:8px;border-radius:50%;background:${c};flex:none;margin-top:5px"></span>
+      <span style="flex:1;min-width:0">
+        <span style="color:var(--ink)">${featureTitle(p)}</span><br>
+        <span class="pk" style="font-size:11px">${p.eier}</span>
+      </span>
+      <span class="pk" style="font-variant-numeric:tabular-nums">${distLbl}</span>
       <span class="x" aria-hidden="true">×</span>
     </div>`;
   }).join('');
@@ -847,15 +875,20 @@ function pinPopupHTML(pin){
     : `<b>Punkt</b><br><span class="pk">${pin.lat.toFixed(5)}, ${pin.lon.toFixed(5)}</span>`;
 
   const matr = pin.matrikkel
-    ? `<div class="meta">Matrikkel: <a class="sv-link" href="${grunnbokenUrl(pin.matrikkel.knr, pin.matrikkel.gnr, pin.matrikkel.bnr)}" target="_blank" rel="noopener">${pin.matrikkel.knr || ''}-${pin.matrikkel.gnr}/${pin.matrikkel.bnr} ↗</a>${pin.teig ? ' · tomtegrense vist' : ''}</div>`
-    : (pin.label ? '<div class="meta">Henter matrikkel og tomtegrense …</div>' : '');
+    ? `<div class="meta">Matrikkel: <a class="sv-link" href="${grunnbokenUrl(pin.matrikkel.knr, pin.matrikkel.gnr, pin.matrikkel.bnr)}" target="_blank" rel="noopener">${pin.matrikkel.knr || ''}-${pin.matrikkel.gnr}/${pin.matrikkel.bnr} ↗</a></div>`
+    : (pin.label ? '<div class="meta">Henter matrikkel og tomt …</div>' : '');
 
   return `<div class="pin-pop">
     ${head}
     ${matr}
+    ${insideRows ? `
+      <div style="margin-top:8px;font-size:11.5px;line-height:1.4">
+        <div class="pk" style="margin-bottom:2px">Du står innenfor:</div>
+        ${insideRows}
+      </div>` : ''}
     <div style="margin-top:8px;font-size:11.5px;line-height:1.4">
-      <div class="pk" style="margin-bottom:2px">Nærmeste kommunale eiendommer:</div>
-      ${rows || '<span class="pk">(ingen i utvalget — sjekk filtrene)</span>'}
+      <div class="pk" style="margin-bottom:2px">Nærmeste kommunale tomter (utenfor):</div>
+      ${proxRows || '<span class="pk">(ingen utenfor)</span>'}
     </div>
     <button class="pop-del" data-id="${pin.id}">Slett punkt</button>
   </div>`;
@@ -895,13 +928,20 @@ function segmentClosest(p, a, b){
   return { d: Math.sqrt(ddx*ddx + ddy*ddy), c: [cx, cy] };
 }
 
-// Returns { dist (m), closest (lon,lat) } from the (lat, lon) point to the
-// nearest point on the geometry boundary. Inside the polygon ⇒ dist = 0,
-// closest = the query point itself.
+// Returns { dist (m), closest (lon,lat), inside (bool) } from the (lat, lon)
+// point to the nearest point on the geometry's *boundary*. Distance is always
+// computed against the boundary — even when the point is inside the polygon —
+// so a pin sitting inside a parcel still gets a meaningful "X m to nearest
+// edge" reading. `inside` is true when the point is strictly inside the
+// polygon (useful for an "innenfor" badge).
 function geometryClosest(lat, lon, geom){
   if (geom.type === 'Point') {
     const [glon, glat] = geom.coordinates;
-    return { dist: L.latLng(lat, lon).distanceTo([glat, glon]), closest: [glon, glat] };
+    return {
+      dist: L.latLng(lat, lon).distanceTo([glat, glon]),
+      closest: [glon, glat],
+      inside: false,
+    };
   }
   const cosLat = Math.cos(lat * Math.PI / 180);
   const mPerDegLat = 111320;
@@ -910,13 +950,15 @@ function geometryClosest(lat, lon, geom){
   const fromLocal = ([x, y])    => [lon + x / mPerDegLon, lat + y / mPerDegLat];
 
   const polys = geom.type === 'Polygon' ? [geom.coordinates] : geom.coordinates;
-  let minD = Infinity, closest = null;
+  let minD = Infinity, closest = null, inside = false;
   for (const poly of polys) {
     const localRings = poly.map(ring => ring.map(toLocal));
-    // Inside the outer ring AND not in any hole ⇒ point is inside the polygon.
+    // Inside-test (outer ring AND not in any hole) — but we don't short-
+    // circuit; we still compute the boundary distance so the popup can
+    // show how far it is to the nearest edge.
     if (pointInRing([0,0], localRings[0]) &&
         !localRings.slice(1).some(h => pointInRing([0,0], h))) {
-      return { dist: 0, closest: [lon, lat] };
+      inside = true;
     }
     for (const ring of localRings) {
       for (let i = 0; i < ring.length - 1; i++) {
@@ -925,7 +967,7 @@ function geometryClosest(lat, lon, geom){
       }
     }
   }
-  return { dist: minD, closest: closest || [lon, lat] };
+  return { dist: minD, closest: closest || [lon, lat], inside };
 }
 
 // =========================================================================
