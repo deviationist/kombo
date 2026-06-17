@@ -83,7 +83,12 @@
   }
   *{box-sizing:border-box}
   html,body{margin:0;height:100%;background:var(--ground);color:var(--ink);
-    font-family:Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+    font-family:Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased;
+    /* Rails slide off-screen via transform: translateX(±100%) — that's
+       a visual move, the layout box stays put, so without overflow:hidden
+       the browser grows a horizontal scrollbar to "reach" the off-screen
+       rail. */
+    overflow:hidden}
   /* Map fills the viewport at all times. Sidebar is an overlay on the left
      edge — nothing reflows on collapse, Leaflet never resizes, no tile snap. */
   #app{position:relative;width:100%;height:100%}
