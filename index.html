@@ -192,9 +192,9 @@
 <div id="app">
   <aside id="rail">
     <header>
-      <div class="eyebrow">Oslo kommune · matrikkel mai 2026</div>
+      <div class="eyebrow" id="eyebrow">Oslo kommune · eiendomsmatrikkel</div>
       <h1>Hvor eier kommunen?</h1>
-      <p>7 022 eiendommer fordelt på fire kommunale instanser. Filtrer og se hvor de ligger.</p>
+      <p id="intro">Filtrer og se hvor Oslo kommunes eiendommer ligger.</p>
     </header>
     <div class="scroll">
       <div id="banner"></div>
@@ -236,8 +236,9 @@
       </section>
     </div>
     <footer>
-      Kilde: Oslo kommune, oversikt over kommunens eiendommer (mai 2026).
-      Koordinater fra <a href="https://ws.geonorge.no/adresser/v1/" target="_blank" rel="noopener">Geonorge</a>.
+      <span id="source-note">Kilde: Oslo kommune, oversikt over kommunens eiendommer.</span>
+      Koordinater fra <a href="https://ws.geonorge.no/adresser/v1/" target="_blank" rel="noopener">Geonorge</a>,
+      parsell-polygoner fra <a href="https://kartkatalog.geonorge.no/metadata/matrikkelen-eiendomskart-teig/74340c24-1c8a-4454-b813-bfe498e80f16" target="_blank" rel="noopener">Kartverket</a>.
     </footer>
   </aside>
   <div id="map"></div>
@@ -632,6 +633,25 @@ function feat(lon,lat,eiendom,adresse,bydel,eier,bruksnavn,areal){
     properties:{eiendom,adresse,bydel,eier,bruksnavn,areal}};
 }
 
+function applyMetadata(meta){
+  if(!meta) return;
+  // Vintage from the XLSX filename — propagates from geocode.py without a
+  // hand-edit per release. Falls back gracefully when missing.
+  const vintage = meta.vintage || '';
+  const eyebrow = document.getElementById('eyebrow');
+  if (eyebrow) eyebrow.textContent = vintage
+    ? `Oslo kommune · matrikkel ${vintage}`
+    : 'Oslo kommune · eiendomsmatrikkel';
+  const intro = document.getElementById('intro');
+  if (intro && meta.totalRows) {
+    intro.textContent = `${fmt(meta.totalRows)} eiendommer fordelt på fire kommunale instanser. Filtrer og se hvor de ligger.`;
+  }
+  const src = document.getElementById('source-note');
+  if (src) src.textContent = vintage
+    ? `Kilde: Oslo kommune, oversikt over kommunens eiendommer (${vintage}).`
+    : 'Kilde: Oslo kommune, oversikt over kommunens eiendommer.';
+}
+
 async function boot(){
   buildOwners();
   let fc=null;
@@ -646,6 +666,7 @@ async function boot(){
     b.innerHTML='Viser <b>eksempeldata</b>. Kjør <code>geocode.py</code> for å lage '+
       '<code>eiendommer.geojson</code> og legg den ved siden av denne fila.';
   }
+  applyMetadata(fc.metadata);
   DATA=fc.features;
   buildBydel();
   render();
