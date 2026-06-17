@@ -851,15 +851,22 @@ function userPinIcon(){
 // Outside-ranked features for a given pin — the same set used by both the
 // popup's "nearest" list AND the pinned-line renderer, so lines can only
 // exist for features the user can see in the list.
+//   * Distance cut-off at 150 m — anything farther isn't really "nearby".
+//   * Buildings (Oslobygg / Boligbygg / Havn) preferred over EBY tomter,
+//     fall back to all only if the building filter would be empty.
+//   * Hard ceiling of 25 entries as a sanity backstop.
+const MAX_PROXIMITY_M = 150;
 function outsideRanked(pin){
   const all = DATA.map(f => {
     const r = featureClosestForMode(pin, f);
     return r ? { ...r, f } : null;
   }).filter(Boolean);
-  const outsideAll = all.filter(x => !x.inside).sort((a,b) => a.dist - b.dist);
   const isBuildingEier = e => e !== 'Eiendoms- og byfornyelsesetaten';
-  const outsideBuildings = outsideAll.filter(x => isBuildingEier(x.f.properties.eier));
-  return (outsideBuildings.length ? outsideBuildings : outsideAll).slice(0, 25);
+  const within = all
+    .filter(x => !x.inside && x.dist <= MAX_PROXIMITY_M)
+    .sort((a,b) => a.dist - b.dist);
+  const withinBuildings = within.filter(x => isBuildingEier(x.f.properties.eier));
+  return (withinBuildings.length ? withinBuildings : within).slice(0, 25);
 }
 function visibleOutsideEi(pin){
   return new Set(outsideRanked(pin).map(x => x.f.properties.eiendom));
@@ -921,8 +928,8 @@ function pinPopupHTML(pin){
         ${insideRows}
       </div>` : ''}
     <div style="margin-top:8px;font-size:11.5px;line-height:1.4">
-      <div class="pk" style="margin-bottom:2px">Nærmeste kommunale tomter (utenfor):</div>
-      <div class="prox-list">${proxRows || '<span class="pk">(ingen utenfor)</span>'}</div>
+      <div class="pk" style="margin-bottom:2px">Nærmeste kommunale tomter (innen 150 m):</div>
+      <div class="prox-list">${proxRows || '<span class="pk">Ingen kommunale tomter innen 150 m.</span>'}</div>
     </div>
     <button class="pop-del" data-id="${pin.id}">Slett punkt</button>
   </div>`;
