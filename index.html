@@ -661,18 +661,18 @@ function featureTitle(p){
 }
 
 function popup(p, anchor){
-  // Two flavours of Google link. The address-based search URL is much more
-  // accurate when we have the kommune-registered address (Google resolves
-  // the place directly, and Street View is one pegman click away). The
-  // pano URL targets the nearest existing panorama to the lat/lon, which
-  // sometimes lands across the street or on a neighbouring building.
+  // Street View link. Google's official Maps URLs API only lets us position
+  // Street View by lat/lon (`viewpoint=LAT,LON`), which snaps to the nearest
+  // existing panorama and can land you on a neighbouring building. The
+  // legacy `?q=ADDRESS&layer=c` URL takes a text query plus a "Street View
+  // layer" hint, and is much more accurate when we have a real address
+  // string from Geonorge. Prefer address; fall back to lat/lon.
   const addr = (p.adresse || '').trim();
-  const gmapsAddr = addr
-    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${addr}${p.postnummer ? `, ${p.postnummer}` : ''}${p.poststed ? ' ' + p.poststed : ''}`)}`
-    : null;
-  const sv = anchor
-    ? `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${anchor[1]},${anchor[0]}`
-    : null;
+  const sv = addr
+    ? `https://www.google.com/maps?q=${encodeURIComponent(`${addr}${p.postnummer ? `, ${p.postnummer}` : ''}${p.poststed ? ' ' + p.poststed : ''}`)}&layer=c`
+    : (anchor
+        ? `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${anchor[1]},${anchor[0]}`
+        : null);
   const mt = parseMatrikkel(p.eiendom);
   const gb = mt ? grunnbokenUrl(mt.knr, mt.gnr, mt.bnr) : null;
   // "0284 OSLO" line under the street address — only when Geonorge gave us
@@ -710,10 +710,8 @@ function popup(p, anchor){
     ${p.bruksnavn && !GENERIC_BRUKSNAVN.has(p.bruksnavn.trim())?`<span class="pk">Bruksnavn</span> ${p.bruksnavn}<br>`:''}
     ${p.areal!=null?`<span class="pk">Areal</span> ${fmt(Math.round(p.areal))} m²`:''}
     <div style="margin-top:6px">
-      ${gmapsAddr?`<a class="sv-link" href="${gmapsAddr}" target="_blank" rel="noopener">Google Maps ↗</a>`:''}
-      ${gmapsAddr && sv?' · ':''}
       ${sv?`<a class="sv-link" href="${sv}" target="_blank" rel="noopener">Street View ↗</a>`:''}
-      ${(gmapsAddr||sv) && gb?' · ':''}
+      ${sv && gb?' · ':''}
       ${gb?`<a class="sv-link" href="${gb}" target="_blank" rel="noopener">Grunnboken ↗</a>`:''}
     </div>
     ${siblingHtml}`;
@@ -941,13 +939,16 @@ function renderBydelStats(){
     opt.textContent = `${opt.value} (${fmt(n)})`;
   }
 
-  // Stats panel — top 10 bydeler by count
+  // Stats panel — top 10 bydeler by count. Hide the whole section when
+  // there's nothing to show; an empty list isn't useful.
   const ranked = Object.entries(counts).sort((a,b) => b[1]-a[1]).slice(0,10);
+  const section = document.getElementById('bydel-stats-section');
   const stats = document.getElementById('bydel-stats');
   if (!ranked.length) {
-    stats.innerHTML = `<div id="bydel-stats-empty">Ingen treff i utvalget.</div>`;
+    if (section) section.style.display = 'none';
     return;
   }
+  if (section) section.style.display = '';
   const max = ranked[0][1] || 1;
   stats.innerHTML = ranked.map(([name, n]) =>
     `<div class="b-row">
