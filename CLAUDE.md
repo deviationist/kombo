@@ -162,10 +162,13 @@ fetchable, so the page is useful before geocoding finishes.
   are overlays on top — neither resizes the map, so Leaflet's tile grid
   is stable through any UI motion.
 - **Left sidebar** (`#rail`, 340 px) — kommune view: stats, view mode
-  (Punkter / Tetthet / Areal-vekt), per-agency toggles, an "Andre lag"
-  section with the "Eiendommer utenfor Oslo" (utenbys) layer toggle, bydel
-  select + top bydeler ranking, "Vis tomtegrenser" checkbox, distance-mode
-  toggle. The utenbys section auto-hides when the dataset has no such rows.
+  (Punkter / Tetthet / Areal-vekt) + "Vis tomtegrenser" checkbox, a **"Lag"**
+  section listing the two map layers as toggles — "Eiendommer i Oslo"
+  (`#show-oslo`, master gate for the in-Oslo register) and "Eiendommer utenfor
+  Oslo" (`#show-utenbys`, the utenbys layer) — each with a feature count, then
+  per-agency toggles (Eier/fester), bydel select + top bydeler ranking,
+  distance-mode toggle. The utenbys *row* (`#utenbys-row`) auto-hides when the
+  dataset has no such rows; the Oslo row always shows.
 - **Right sidebar** (`#rail-r`, 300 px) — "Mine punkter": add-pin form
   (address search + "Klikk på kart" mode), distance-mode toggle, pin list.
 - Both rails slide via `transform: translateX(-100% | 100%)`. Tab toggles
@@ -228,7 +231,7 @@ intentionally outside the four-agency palette to avoid confusion.
 
 `localStorage["kombo.v1"]` holds: `bydel`, `mode`, `base`, `active`,
 `center`, `zoom`, `railCollapsed`, `railRCollapsed`, `modeInfoOpen`,
-`showPolygons`, `showUtenbys`, `distanceMode`. UI-only fields stay here.
+`showPolygons`, `showOslo`, `showUtenbys`, `distanceMode`. UI-only fields stay here.
 
 `localStorage["kombo.userPins.v1"]` holds the user pin array (separate
 key so user data is independent of UI prefs).
@@ -244,10 +247,12 @@ fallback only kicks in when `active` is absent from storage entirely.
 
 ```
 #z=<int>&lat=<5dp>&lon=<5dp>&v=clusters|heat|heatArea&base=dark|light|sat
- &own=<short codes, comma-separated>&bydel=<urlencoded>&teig=0|1&utb=0|1&dm=edge|marker
+ &own=<short codes, comma-separated>&bydel=<urlencoded>&teig=0|1&osl=0|1&utb=0|1&dm=edge|marker
 ```
 
-`utb=1` turns on the "Eiendommer utenfor Oslo" (utenbys) layer.
+`utb=1` turns on the "Eiendommer utenfor Oslo" (utenbys) layer; `osl=0` turns
+off the "Eiendommer i Oslo" master layer (default on, so only the off-state is
+emitted, mirroring `utb`).
 
 Owner short codes: `eby`, `bygg`, `bolig`, `havn`. Empty `own=` encodes
 the explicit-no-agencies state. `applyUrlHash()` runs after `loadState()`
@@ -320,10 +325,14 @@ workflow's geojson commits also redeploy the site automatically.
   **Both sheets are now processed.** Utenbys rows are geocoded against their
   *own* kommune (per-row KNR) via the Teig WFS — most have no registered
   address — and emitted as features flagged `utenbys: true` + `kommune`.
-  The map exposes them as a toggleable "Eiendommer utenfor Oslo" layer
-  (`state.showUtenbys`, hash `utb=1`), independent of the agency + bydel
-  filters and excluded from the bydel/area stats. `UTENBYS_SCHEMA` /
-  `OSLO_SCHEMA` in `geocode.py` are the per-sheet column contracts.
+  The map exposes them as a toggleable "Eiendommer utenfor Oslo" layer in the
+  left-rail **"Lag"** section (`state.showUtenbys`, hash `utb=1`), alongside the
+  "Eiendommer i Oslo" master toggle (`state.showOslo`, hash `osl=0` when off).
+  The utenbys layer is gated by its toggle **and** the agency (Eier/fester)
+  filter — deselecting an agency hides its utenbys parcels too — but **not** by
+  the bydel filter (utenbys rows have no bydel), and it stays excluded from the
+  bydel/area stats. `UTENBYS_SCHEMA` / `OSLO_SCHEMA` in `geocode.py` are the
+  per-sheet column contracts.
 - Pinned-line storage uses **feature identity** (eiendomsstring) not
   coordinates, so a distance-mode flip can re-derive the endpoint without
   losing the pin. Legacy `pin.pinnedClosests` entries are dropped on load.
