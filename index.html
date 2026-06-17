@@ -1848,7 +1848,14 @@ document.addEventListener('keydown', e => {
   if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
     const dir = e.key === 'ArrowLeft' ? 'prev' : 'next';
     const btn = popupEl.querySelector(`.nav-btn[data-dir="${dir}"][data-eiendom]:not([disabled])`);
-    if (btn) { e.preventDefault(); jumpToFeature(btn.dataset.eiendom, btn.dataset.mode || 'auto'); }
+    if (btn) {
+      // Stop the event before it reaches Leaflet's own keyboard handler on
+      // the map container — without this the arrow key would also pan the
+      // map (Leaflet keyboard nav is on by default).
+      e.preventDefault();
+      e.stopPropagation();
+      jumpToFeature(btn.dataset.eiendom, btn.dataset.mode || 'auto');
+    }
     return;
   }
   if (e.key === 'Escape') {
