@@ -2842,7 +2842,7 @@ async function boot(){
   // data file — the abstraction is deliberate). If it's unreachable we show the
   // embedded SAMPLE (inline in this file, not an external dependency) with a
   // banner so the page degrades gracefully rather than rendering blank.
-  const API='https://kombo-api.ichiva.no/eiendommer.geojson';
+  const API='https://kombo-api.ichiva.no/features';
   try{
     const r=await fetch(API,{cache:'no-store'});
     if(r.ok){
