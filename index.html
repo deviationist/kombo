@@ -544,6 +544,7 @@
     </div>
     <footer>
       <span id="source-note">Kilde: Oslo kommune, oversikt over kommunens eiendommer.</span>
+      <span id="updated-note"></span>
       Koordinater fra <a href="https://ws.geonorge.no/adresser/v1/" target="_blank" rel="noopener">Geonorge</a>,
       parsell-polygoner fra <a href="https://kartkatalog.geonorge.no/metadata/matrikkelen-eiendomskart-teig/74340c24-1c8a-4454-b813-bfe498e80f16" target="_blank" rel="noopener">Kartverket</a>.
     </footer>
@@ -2721,21 +2722,45 @@ function applyMetadata(meta){
   if (src) src.textContent = vintage
     ? `Kilde: Oslo kommune, oversikt over kommunens eiendommer (${vintage}).`
     : 'Kilde: Oslo kommune, oversikt over kommunens eiendommer.';
+  // "Sist oppdatert" — when the data last actually CHANGED (dataChangedAt),
+  // not merely when a sync ran (generatedAt). A weekly sync that produces an
+  // identical dataset keeps the old date. Fall back to generatedAt for older
+  // geojson that predates dataChangedAt. Distinct from `vintage`, which is the
+  // kommune's published data release.
+  const upd = document.getElementById('updated-note');
+  const ts = meta.dataChangedAt || meta.generatedAt;
+  if (upd && ts) {
+    const d = new Date(ts);
+    if (!isNaN(d)) {
+      const s = d.toLocaleDateString('nb-NO', {day:'numeric', month:'long', year:'numeric'});
+      upd.textContent = `Sist oppdatert ${s}.`;
+    }
+  }
 }
 
 async function boot(){
   buildOwners();
   let fc=null;
-  try{
-    const r=await fetch('eiendommer.geojson',{cache:'no-store'});
-    if(r.ok) fc=await r.json();
-  }catch(e){}
+  // Data source: the kombo-api service (single source of truth, regenerated
+  // weekly), with a graceful fallback to a co-located eiendommer.geojson so the
+  // map keeps working if the API is unreachable — and so a purely-static deploy
+  // (just this file + the geojson) still works.
+  const SOURCES=['https://kombo-api.ichiva.no/eiendommer.geojson','eiendommer.geojson'];
+  for(const url of SOURCES){
+    try{
+      const r=await fetch(url,{cache:'no-store'});
+      if(r.ok){
+        const j=await r.json();
+        if(j && j.features && j.features.length){ fc=j; break; }
+      }
+    }catch(e){ /* try next source */ }
+  }
   if(!fc || !fc.features || !fc.features.length){
     fc=SAMPLE;
     const b=document.getElementById('banner');
     b.style.display='block';
-    b.innerHTML='Viser <b>eksempeldata</b>. Kjør <code>geocode.py</code> for å lage '+
-      '<code>eiendommer.geojson</code> og legg den ved siden av denne fila.';
+    b.innerHTML='Viser <b>eksempeldata</b> — kunne ikke laste data fra '+
+      '<code>kombo-api</code> eller lokal <code>eiendommer.geojson</code>.';
   }
   applyMetadata(fc.metadata);
   DATA=fc.features;
