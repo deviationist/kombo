@@ -606,12 +606,34 @@ def main():
     oslo_miss = [m for m in missing if not _is_utb(m)]
     utb_miss  = [m for m in missing if _is_utb(m)]
 
+    # "Last changed" vs. "last generated". A weekly sync re-runs even when the
+    # kommune hasn't republished (they do ~twice a year), so generatedAt alone
+    # would imply a change that didn't happen. Hash the feature content and only
+    # advance dataChangedAt when that hash differs from the previous output —
+    # the map shows dataChangedAt so "Sist oppdatert" means a real change.
+    import hashlib, datetime as _dt
+    now_iso = _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
+    content_hash = hashlib.sha256(
+        json.dumps(features, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+    out_path = Path("eiendommer.geojson")
+    data_changed_at = now_iso
+    if out_path.exists():
+        try:
+            prev = json.loads(out_path.read_text(encoding="utf-8")).get("metadata", {})
+            if prev.get("contentHash") == content_hash and prev.get("dataChangedAt"):
+                data_changed_at = prev["dataChangedAt"]   # unchanged → keep the date
+        except (ValueError, OSError):
+            pass
+
     fc = {
         "type": "FeatureCollection",
         "metadata": {
             "vintage": vintage,           # e.g. "mai 2026", or null if not found
             "sourceFile": xlsx.name,
-            "generatedAt": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(timespec="seconds"),
+            "generatedAt": now_iso,            # every run (when this file was built)
+            "dataChangedAt": data_changed_at,  # only advances on a real content change
+            "contentHash": content_hash,       # sha256 of the feature set
             "totalRows": len(oslo_feat) + len(oslo_miss),   # in-kommune rows present
             "located": len(oslo_feat),
             "utenbysRows": len(utb_feat) + len(utb_miss),   # out-of-kommune rows present
@@ -619,8 +641,7 @@ def main():
         },
         "features": features,
     }
-    Path("eiendommer.geojson").write_text(
-        json.dumps(fc, ensure_ascii=False), encoding="utf-8")
+    out_path.write_text(json.dumps(fc, ensure_ascii=False), encoding="utf-8")
 
     with open("missing.csv", "w", newline="", encoding="utf-8") as f:
         # Common columns across both sheets; `kommune` is blank for in-Oslo

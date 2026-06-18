@@ -1,0 +1,20 @@
+# Keep the build context tiny and the image clean. The dataset + caches live on
+# the mounted DATA_DIR volume, not in the image; the map (index.html) and docs
+# aren't part of the API service.
+.git
+.github
+__pycache__
+*.pyc
+.venv
+venv
+fonts/
+index.html
+favicon.svg
+README.md
+CLAUDE.md
+missing.csv
+eiendommer.geojson
+geocode_cache.sqlite
+*.xlsx
+*.sqlite
+.DS_Store
