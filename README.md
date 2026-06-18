@@ -3,94 +3,56 @@
 > **KomBo** (fra «kommunale boliger») — navnet stammer fra boligfokuset, men
 > kartet viser i dag *alle* fire kommunale etater (EBY, Oslobygg, Boligbygg, Havn).
 
-A two-step pipeline that maps **every property Oslo kommune owns** — across all
+An interactive Leaflet map of **every property Oslo kommune owns** — across all
 four municipal bodies: from rental housing to schools, from road parcels to the
 harbour. Live at **<https://kombo.ichiva.no/>**.
 
+This repo is **just the map** (`index.html`). The data — downloading the
+kommune's spreadsheet, geocoding every parcel, and serving it — is produced and
+served by a separate service, **[kombo-api](https://github.com/deviationist/kombo-api)**.
+
 ```
-XLSX ──(geocode.py)──> eiendommer.geojson ──(index.html)──> map in browser
+kombo-api  ──>  /eiendommer.geojson  ──(fetch)──>  index.html  ──>  map in browser
 ```
 
 ## What's in scope
 
-The source spreadsheet (`Oversikt over Oslo kommunes eiendommer per mai 2026`,
-re-published every six months by the kommune) lists every property the city
-owns — 7,022 rows split across four owning agencies:
+The source spreadsheet (re-published every six months by the kommune) lists
+every property the city owns — ~7,000 rows across four owning agencies:
 
 | Eier / fester | Antall | Rolle |
 |---|---|---|
-| Eiendoms- og byfornyelsesetaten | 5,621 | Tomter og veiareal — kommunens største grunneier |
-| Oslobygg KF | 795 | Formålsbygg: skoler, barnehager, sykehjem, idrettsanlegg, kontorer |
-| Boligbygg Oslo KF | 528 | Kommunale utleieboliger |
-| Oslo Havn KF | 78 | Havnevirksomhet og eiendommer langs sjøsiden |
+| Eiendoms- og byfornyelsesetaten | ~5,621 | Tomter og veiareal — kommunens største grunneier |
+| Oslobygg KF | ~795 | Formålsbygg: skoler, barnehager, sykehjem, idrettsanlegg, kontorer |
+| Boligbygg Oslo KF | ~528 | Kommunale utleieboliger |
+| Oslo Havn KF | ~78 | Havnevirksomhet og eiendommer langs sjøsiden |
 
-All four are mapped by default. The scope is configurable via `INCLUDE_EIER` in
-`source.env` if you want to filter (e.g. only housing).
+Plus a toggleable layer of Oslo-owned land *outside* Oslo (Oslomarka forest +
+drinking-water catchment in ~20 neighbouring kommuner).
 
-## Why two geocoders, not one
+## Data source
 
-There are no coordinates in the source file — only a **matrikkelnummer** per
-row (`0301 - 10 / 68 / 0 / 0`, where `0301` = Oslo). Two complementary
-resolvers convert it to map geometry:
+`index.html` fetches its dataset at boot, in order:
 
-1. **Geonorge address API** (free, no key) — gives a point at the parcel's
-   registered street address. Covers about a third of the register; the
-   municipal *buildings* (Boligbygg housing, Oslobygg schools/care homes) all
-   have addresses. Also returns `postnummer` + `poststed` for the popup.
-2. **Kartverket "Matrikkelen – Eiendomskart Teig" WFS** (free, no key) —
-   gives the *polygon* of the parcel itself, used both as a fallback for
-   address-less rows AND alongside Geonorge so addressed properties also show
-   the building's footprint on the map.
+1. **`https://kombo-api.ichiva.no/eiendommer.geojson`** — the live API (single
+   source of truth, regenerated weekly).
+2. **`eiendommer.geojson`** committed here — a frozen fallback snapshot so the
+   map keeps working if the API is down, and so a static deploy works on its own.
 
-The pipeline deduplicates 7,022 rows to ~6,636 unique `(gnr, bnr)` pairs and
-caches every API answer in SQLite (`geocode_cache.sqlite`) so re-runs are
-instant and resumable. The cache schema (v3) carries lat/lon + adressetekst
-+ postnummer + poststed (Geonorge) plus the polygon GeoJSON (Kartverket),
-with separate `addr_source` / `geom_source` columns so each resolver's
-attempt state is tracked independently.
+If both fail, an embedded sample dataset renders with a banner. The data
+pipeline (XLSX → geocode → GeoJSON), the `/nearby` proximity endpoint, and the
+GeoJSON contract all live in **kombo-api**.
 
 ## Run it
 
-Dependencies are managed with Poetry (`pyproject.toml`, non-package mode):
+No build step, no dependencies — it's one static file:
 
 ```bash
-poetry install
-
-# (optional) download today's XLSX from the kommune in one command
-poetry run python fetch_xlsx.py            # → writes the file with the kommune's filename
-poetry run python fetch_xlsx.py --url-only # just print the resolved URL
-
-# geocode + render
-poetry run python geocode.py "Oversikt-over-Oslo-kommunes-eiendommer-mai-2026_nett-2.xlsx"
-# → eiendommer.geojson, geocode_cache.sqlite, missing.csv
-
-# serve the map (any static server; index.html fetches the geojson):
-poetry run python -m http.server 8000   # → http://localhost:8000/index.html
+python -m http.server 8000   # → http://localhost:8000/index.html
 ```
 
-`geocode.py` uses a 3-worker `ThreadPoolExecutor` (configurable via
-`WORKERS` in `source.env`) to triple throughput against the upstream APIs
-without going past polite use. A full cold run takes about 30–40 min;
-re-runs against a warm cache are seconds. Cache hits skip the network
-entirely, so partial runs are resumable — kill at any point, restart and
-it picks up.
-
-`index.html` renders an embedded sample if `eiendommer.geojson` isn't there
-yet, so you can poke at the UI before geocoding finishes.
-
-## Auto-sync from upstream
-
-`.github/workflows/sync.yml` runs every Monday: scrapes Oslo kommune's
-[eiendomsoversikt page](https://www.oslo.kommune.no/plan-bygg-og-eiendom/kart-og-eiendomsinformasjon/kommunal-eiendom/eiendomsoversikt/)
-for the latest XLSX link via `fetch_xlsx.py` (anchor text `(XLSX)` —
-format-agnostic; the kommune migrated their CMS at some point and the old
-`/getfile.php/<id>-<timestamp>/` became `/get-file/<id>/<hash>/`, both handled
-by the same scraper), runs `geocode.py`, and commits the regenerated
-`eiendommer.geojson` if anything changed. The kommune republishes the file
-every six months, so weekly polling is plenty.
-
-Page URL + anchor marker + filter scope all live in `source.env` so a future
-restructure can be fixed without touching the workflow YAML.
+It fetches from the live API by default; if that's unreachable it uses the
+committed `eiendommer.geojson` beside it.
 
 ## The map (`index.html`)
 
@@ -107,18 +69,18 @@ Tailwind Play CDN). Deployed automatically to GitHub Pages on every push to
 - **Areal-vekt** — heat weighted by parcel size (big sites glow brighter)
 - **Vis tomtegrenser** — Kartverket Teig outlines styled per agency colour
   (cluster mode only — they fight the heat visualisation in the other modes)
-- Toggle agencies, filter by bydel (the dropdown shows live counts per
-  district), switch basemap (CARTO Mørk / Lys / Esri Satellitt)
+- A **"Lag"** section toggles the two layers ("Eiendommer i Oslo" master gate +
+  "Eiendommer utenfor Oslo"), then per-agency toggles, bydel filter (with live
+  counts), basemap switch (CARTO Mørk / Lys / Esri Satellitt)
 - "Topp bydeler" ranking — top 10 districts by parcel count in the current
   selection
-- Popup links straight into Google Maps Street View AND
-  Grunnboken/eiendomsregisteret for each parcel
+- Popup links straight into Grunnboken/eiendomsregisteret for each parcel
 
 **Right sidebar** — "Mine punkter" (sammenligning):
 
 - Add a pin by typing an address (debounced Geonorge search) OR clicking
   "Klikk på kart" + clicking a spot OR right-clicking the map → "Legg til
-  markør her" (prompts for an optional name)
+  markør her"
 - Each pin is auto-enriched: reverse-geocoded for address + matrikkel,
   then the parcel's Teig polygon is fetched from Kartverket and drawn in
   magenta around the pin
@@ -127,29 +89,20 @@ Tailwind Play CDN). Deployed automatically to GitHub Pages on every push to
   Distance measured to the closest tomtekant (default) or the address
   marker — toggle via "Avstand måles til"
 - Hover a row to preview the measurement line; click to pin it (solid,
-  labelled with distance, persists across reloads). Click the line later
-  to re-open the pin's popup. Click the row again to unpin
-- Pinned-line targets remain visible on the map regardless of view mode
-  or agency filter — the line always has something to point at
-- Sidebar list lets you focus a pin, rename it, or delete it; the in-popup
-  "Slett punkt" does the same
+  labelled with distance, persists across reloads). Click the row again to unpin
 
 **Persistence**:
 
-- Selections, map centre/zoom, sidebar collapse state, etc. persist in
-  `localStorage` (key `kombo.v1`); pins under a separate key
-  (`kombo.userPins.v1`)
-- Light/dark palette follows `prefers-color-scheme`; saved layer choice
-  wins on subsequent visits
+- Selections, map centre/zoom, sidebar collapse state persist in `localStorage`
+  (key `kombo.v1`); pins under a separate key (`kombo.userPins.v1`)
+- Light/dark palette follows `prefers-color-scheme`; saved layer choice wins
 
-**Shareable URLs**: the current view is round-tripped through
-`location.hash` — paste any link to land on the same map state
-(`#z=12&lat=…&own=bygg,bolig&bydel=Sagene&teig=0&dm=marker`). UI-only
-preferences (rail collapsed, mode-info open) stay in localStorage only.
+**Shareable URLs**: the current view round-trips through `location.hash` — paste
+any link to land on the same map state
+(`#z=12&lat=…&own=bygg,bolig&bydel=Sagene&teig=0&dm=marker`).
 
-### Swapping the basemap / using Mapbox or MapLibre
+### Swapping the basemap
 
 Three basemaps ship by default — CARTO `dark_all`, CARTO `light_all`, and
-Esri World Imagery (all token-free). To swap to Mapbox GL or MapLibre GL,
-that's a rewrite of the `L.tileLayer` calls; the GeoJSON output is standard,
-so it feeds any of them — Google Maps, Mapbox, MapLibre, Leaflet, or QGIS.
+Esri World Imagery (all token-free). The GeoJSON output is standard, so it feeds
+any renderer — Google Maps, Mapbox, MapLibre, Leaflet, or QGIS.
