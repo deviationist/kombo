@@ -55,9 +55,16 @@
   // paint so the sidebars start in their saved positions instead of
   // expanding then snapping shut on load. Runs synchronously before <body>.
   try {
-    const s = JSON.parse(localStorage.getItem('kombo.v1') || '{}');
-    if (s.railCollapsed) document.documentElement.classList.add('rail-collapsed');
-    if (s.railRCollapsed) document.documentElement.classList.add('rail-r-collapsed');
+    const raw = localStorage.getItem('kombo.v1');
+    const s = JSON.parse(raw || '{}');
+    // Fresh-visit rail defaults scale to the screen so two 340/300px rails
+    // never crowd a small map: phone → both collapsed (full-screen map first,
+    // two pill handles inviting a tap); tablet → left rail open, right
+    // collapsed; desktop → both open. Returning visitors keep saved state.
+    const phone  = window.matchMedia('(max-width:760px)').matches;
+    const tablet = !phone && window.matchMedia('(max-width:1024px)').matches;
+    if (s.railCollapsed  || (!raw && phone))            document.documentElement.classList.add('rail-collapsed');
+    if (s.railRCollapsed || (!raw && (phone || tablet))) document.documentElement.classList.add('rail-r-collapsed');
   } catch (e) {}
 </script>
 <!-- Self-hosted fonts (was the Google Fonts CDN). Same-origin + preloaded so the
@@ -86,6 +93,10 @@
     src:url(fonts/barlow-condensed-600.woff2) format('woff2');
     unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
   :root{
+    /* Rail widths as variables so the rail box, its toggle-handle offset, the
+       Leaflet corner-control shift and the search-bar shift all stay in lockstep
+       — and the mobile media query only has to override these two values. */
+    --rail-w:340px; --rail-r-w:300px;
     --ground:#0e1417; --panel:#161d21; --panel-2:#1d262b; --line:#2a363c;
     --ink:#e8edf0; --muted:#8a979e;
     --halo:rgba(255,255,255,.92);              /* contrast ring around markers/clusters */
@@ -127,13 +138,13 @@
      edge — nothing reflows on collapse, Leaflet never resizes, no tile snap. */
   #app{position:relative;width:100%;height:100%}
   #map{position:absolute;inset:0;background:var(--ground)}
-  #rail{position:absolute;top:0;left:0;bottom:0;width:340px;z-index:500;
+  #rail{position:absolute;top:0;left:0;bottom:0;width:var(--rail-w);z-index:500;
     background:var(--panel);border-right:1px solid var(--line);
     display:flex;flex-direction:column;overflow:hidden;
     transition:transform .22s ease}
   /* Right-side companion rail — user-added pins live here. Same shell as
      #rail, mirrored. */
-  #rail-r{position:absolute;top:0;right:0;bottom:0;width:300px;z-index:500;
+  #rail-r{position:absolute;top:0;right:0;bottom:0;width:var(--rail-r-w);z-index:500;
     background:var(--panel);border-left:1px solid var(--line);
     display:flex;flex-direction:column;overflow:hidden;
     transition:transform .22s ease}
@@ -147,14 +158,14 @@
   .leaflet-top.leaflet-left,
   .leaflet-bottom.leaflet-left{transition:transform .22s ease}
   html:not(.rail-collapsed) .leaflet-top.leaflet-left,
-  html:not(.rail-collapsed) .leaflet-bottom.leaflet-left{transform:translateX(340px)}
+  html:not(.rail-collapsed) .leaflet-bottom.leaflet-left{transform:translateX(var(--rail-w))}
   .leaflet-top.leaflet-right,
   .leaflet-bottom.leaflet-right{transition:transform .22s ease}
   html:not(.rail-r-collapsed) .leaflet-top.leaflet-right,
-  html:not(.rail-r-collapsed) .leaflet-bottom.leaflet-right{transform:translateX(-300px)}
+  html:not(.rail-r-collapsed) .leaflet-bottom.leaflet-right{transform:translateX(calc(-1 * var(--rail-r-w)))}
   /* Vertically-centred, just outside the rail's right edge so it can never
      collide with Leaflet's corner controls (zoom topleft, layers topright). */
-  #rail-toggle{position:absolute;top:50%;left:340px;transform:translateY(-50%);
+  #rail-toggle{position:absolute;top:50%;left:var(--rail-w);transform:translateY(-50%);
     z-index:1000;width:22px;height:54px;border-radius:0 6px 6px 0;cursor:pointer;
     background:var(--panel-2);border:1px solid var(--line);border-left:0;color:var(--muted);
     font:600 14px/1 Inter;display:flex;align-items:center;justify-content:center;
@@ -171,7 +182,7 @@
   }
   .rail-collapsed #rail-toggle:hover{background:#7cc8c3;color:var(--ground)}
   /* Right-rail toggle: same shape, mirrored to the rail's left edge. */
-  #rail-r-toggle{position:absolute;top:50%;right:300px;transform:translateY(-50%);
+  #rail-r-toggle{position:absolute;top:50%;right:var(--rail-r-w);transform:translateY(-50%);
     z-index:1000;width:22px;height:54px;border-radius:6px 0 0 6px;cursor:pointer;
     background:var(--panel-2);border:1px solid var(--line);border-right:0;color:var(--muted);
     font:600 14px/1 Inter;display:flex;align-items:center;justify-content:center;
@@ -415,7 +426,7 @@
      rail-shifting transform so it never overlaps anything. */
   #search-bar{position:absolute;top:14px;left:56px;z-index:1000;
     transition:transform .22s ease}
-  html:not(.rail-collapsed) #search-bar{transform:translateX(340px)}
+  html:not(.rail-collapsed) #search-bar{transform:translateX(var(--rail-w))}
   #search-bar .search-input-wrap{position:relative;display:inline-block}
   #search-bar input{width:320px;max-width:50vw;padding:6px 28px 6px 10px;border-radius:6px;
     background:var(--panel-2);color:var(--ink);border:1px solid var(--line);
@@ -482,9 +493,22 @@
   .sv-link:hover{text-decoration:underline}
   .leaflet-control-attribution{background:var(--attr-bg)!important;color:var(--muted)!important}
   .leaflet-control-attribution a{color:var(--muted)!important}
+  /* ── Mobile / narrow viewports ──────────────────────────────────────────
+     The map keeps filling the whole viewport (the overlay model already does
+     that); we only need the slide-over rails to stop being wider than the
+     screen. Cap each rail to most of the viewport width so a sliver of map
+     stays visible behind an open rail, and the two rails never both span the
+     screen at once. Everything tied to --rail-w / --rail-r-w (toggle handles,
+     Leaflet controls, search bar) follows automatically. */
   @media (max-width:760px){
-    #app{flex-direction:column}#rail{width:100%;height:46%;border-right:0;border-bottom:1px solid var(--line)}
-    #map{height:54%}
+    :root{ --rail-w:min(340px,86vw); --rail-r-w:min(300px,86vw); }
+    /* Give the dataset search room to be usable when the rail is hidden. */
+    #search-bar input{width:auto;max-width:calc(100vw - 96px)}
+  }
+  /* Larger touch target for the in-rail × on touch devices. */
+  @media (max-width:760px) and (pointer:coarse){
+    .rail-close{width:30px;height:30px;font-size:16px}
+    #rail-close,#rail-r-close{right:12px}
   }
 </style>
 </head>
@@ -669,12 +693,22 @@ const OWNERS = [
 const DEFAULT_ACTIVE_OWNERS = ["Boligbygg Oslo KF"];
 const colorOf = k => (OWNERS.find(o=>o.key===k)||{color:"#8a979e"}).color;
 const active = new Set(DEFAULT_ACTIVE_OWNERS);
+// Mirrors the FOUC-guard logic in <head>: fresh-visit rail defaults scale to
+// the screen (phone → both collapsed, tablet → only right collapsed, desktop →
+// both open). Keeps the JS state in sync with the pre-paint class application —
+// otherwise applyRailState() below would re-open them on first run.
+const FRESH = (()=>{ try {
+  const fresh  = !localStorage.getItem('kombo.v1');
+  const phone  = window.matchMedia('(max-width:760px)').matches;
+  const tablet = !phone && window.matchMedia('(max-width:1024px)').matches;
+  return { left: fresh && phone, right: fresh && (phone || tablet) };
+} catch(e){ return { left:false, right:false }; } })();
 // Default base layer is the light basemap on a fresh visit; a saved
 // explicit choice (from the layer-control) wins via loadState.
 let state = {bydel:"", mode:"clusters",
              base: 'light',
              center:[59.913,10.74], zoom:11,
-             railCollapsed:false, railRCollapsed:false,
+             railCollapsed:FRESH.left, railRCollapsed:FRESH.right,
              modeInfoOpen:false, showPolygons:true,
              showOslo:true,             // master toggle for the in-Oslo register layer
              showUtenbys:false,         // toggle the out-of-Oslo ("utenbys") layer
@@ -1502,6 +1536,10 @@ const bydelSel = document.getElementById('bydel');
 
 // Sidebar collapse/expand — apply saved state and wire the toggle.
 const railToggle = document.getElementById('rail-toggle');
+// On phone + tablet the two slide-over rails (340+300px) would crowd or bury
+// the map if both were open, so opening one collapses the other. Only wide
+// desktops (>1024px) keep both open side by side.
+const isNarrow = () => window.matchMedia('(max-width:1024px)').matches;
 function applyRailState(){
   // Toggle on <html> so the same selector matches both the head script's
   // pre-paint application AND the runtime click.
@@ -1511,6 +1549,10 @@ function applyRailState(){
 applyRailState();
 railToggle.addEventListener('click', () => {
   state.railCollapsed = !state.railCollapsed;
+  // Opening the left rail on a phone: get the right one out of the way first.
+  if(!state.railCollapsed && isNarrow() && !state.railRCollapsed){
+    state.railRCollapsed = true; applyRailRState();
+  }
   applyRailState();
   saveState();
   // No invalidateSize needed — the map container is fixed-size; only the
@@ -1607,6 +1649,10 @@ function applyRailRState(){
 applyRailRState();
 railRToggle.addEventListener('click', () => {
   state.railRCollapsed = !state.railRCollapsed;
+  // Opening the right rail on a phone: collapse the left so they don't overlap.
+  if(!state.railRCollapsed && isNarrow() && !state.railCollapsed){
+    state.railCollapsed = true; applyRailState();
+  }
   applyRailRState();
   saveState();
 });
@@ -1615,6 +1661,19 @@ document.getElementById('rail-r-close').addEventListener('click', () => {
   applyRailRState();
   saveState();
 });
+
+// On phone/tablet, jumping to a feature from a list/pin row inside a rail
+// would leave that rail covering the feature's popup (the map is full-viewport,
+// so the flown-to centre lands behind the open overlay). Collapse the rails so
+// the map + popup are fully visible. No-op on wide desktops and when nothing
+// is open, so the side-by-side desktop view is untouched.
+function collapseRailsIfNarrow(){
+  if (!isNarrow()) return;
+  let changed = false;
+  if (!state.railCollapsed)  { state.railCollapsed = true;  applyRailState();  changed = true; }
+  if (!state.railRCollapsed) { state.railRCollapsed = true; applyRailRState(); changed = true; }
+  if (changed) saveState();
+}
 
 // Persisted user pins. Separate key from the rest of the UI state since
 // they're domain data, not UI preferences.
@@ -2422,6 +2481,8 @@ function jumpToFeature(ei, mode = 'auto'){
   if (!f) return;
   const a = featureAnchor(f);
   if (!a) return;
+  // Narrow screens: get the rails out of the way so the popup isn't buried.
+  collapseRailsIfNarrow();
   const html = popup(f.properties, a, mode);
   // If a popup is already open, update its content + position in place —
   // avoids the close/open fade cycle that flashes the popup on every
