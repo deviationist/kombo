@@ -17,22 +17,20 @@ the dataset live in a separate repo, **[kombo-api](https://github.com/deviationi
 and a `/nearby` proximity endpoint).
 
 ```
-kombo-api  ──>  /eiendommer.geojson  ──(fetch)──>  index.html  ──>  map in browser
-  (data system + API)                  ↑ fallback: committed eiendommer.geojson
+kombo-api  ──(HTTP)──>  index.html  ──>  map in browser
+ (data system + API)
 ```
 
 ## Data source
 
-`index.html` loads its data at boot from **two sources, in order** (see `boot()`):
+`index.html` loads its data at boot from the kombo-api service (see `boot()`):
 
-1. `https://kombo-api.ichiva.no/eiendommer.geojson` — the live API (single
-   source of truth, regenerated weekly).
-2. `eiendommer.geojson` co-located in this repo — a **frozen fallback snapshot**
-   so the map keeps working if the API is unreachable, and so a purely-static
-   deploy works. It does *not* auto-update; refresh it manually from the API if
-   the fallback drifts too far.
+- `https://kombo-api.ichiva.no/eiendommer.geojson` — the single source of truth
+  (regenerated weekly).
 
-If both fail, the map shows embedded `SAMPLE` features with a banner.
+If the API is unreachable, the map renders the embedded `SAMPLE` features
+(inline in `index.html`) with a "could not load" banner so it degrades
+gracefully instead of blank.
 
 ### GeoJSON shape (the contract this map consumes)
 
@@ -210,5 +208,5 @@ proxied is fine). Every push to `main` redeploys.
 - The utenbys layer is gated by its toggle **and** the agency (Eier/fester)
   filter, but **not** by the bydel filter (utenbys rows have no bydel); it's
   excluded from the bydel/area stats.
-- `eiendommer.geojson` here is a **fallback snapshot**, gitignored caches/xlsx
-  aside; the live data is the API. Don't wire a geocoder back into this repo.
+- The map consumes the API only — don't reintroduce a committed dataset or a
+  geocoder here; that all lives in kombo-api.
