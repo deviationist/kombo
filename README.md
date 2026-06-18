@@ -12,7 +12,7 @@ kommune's spreadsheet, geocoding every parcel, and serving it — is produced an
 served by a separate service, **[kombo-api](https://github.com/deviationist/kombo-api)**.
 
 ```
-kombo-api  ──>  /eiendommer.geojson  ──(fetch)──>  index.html  ──>  map in browser
+kombo-api  ──(HTTP)──>  index.html  ──>  map in browser
 ```
 
 ## What's in scope
@@ -32,16 +32,14 @@ drinking-water catchment in ~20 neighbouring kommuner).
 
 ## Data source
 
-`index.html` fetches its dataset at boot, in order:
+`index.html` fetches its dataset at boot from the kombo-api service:
 
-1. **`https://kombo-api.ichiva.no/eiendommer.geojson`** — the live API (single
-   source of truth, regenerated weekly).
-2. **`eiendommer.geojson`** committed here — a frozen fallback snapshot so the
-   map keeps working if the API is down, and so a static deploy works on its own.
+- **`https://kombo-api.ichiva.no/eiendommer.geojson`** — the single source of
+  truth (regenerated weekly).
 
-If both fail, an embedded sample dataset renders with a banner. The data
-pipeline (XLSX → geocode → GeoJSON), the `/nearby` proximity endpoint, and the
-GeoJSON contract all live in **kombo-api**.
+If the API is unreachable, an embedded sample dataset renders with a banner so
+the page degrades gracefully. The data pipeline (XLSX → geocode → GeoJSON), the
+`/nearby` proximity endpoint, and the GeoJSON contract all live in **kombo-api**.
 
 ## Run it
 
@@ -51,8 +49,8 @@ No build step, no dependencies — it's one static file:
 python -m http.server 8000   # → http://localhost:8000/index.html
 ```
 
-It fetches from the live API by default; if that's unreachable it uses the
-committed `eiendommer.geojson` beside it.
+It fetches its data from the live API; if that's unreachable it shows an
+embedded sample with a banner.
 
 ## The map (`index.html`)
 

@@ -1,6 +1,9 @@
 *.xlsx
 *.sqlite
 
+# Data comes from the API only — no local dataset file committed here.
+eiendommer.geojson
+
 # Python bytecode
 __pycache__/
 
