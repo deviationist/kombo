@@ -231,6 +231,20 @@
   .owner .nm{font-size:12.5px;flex:1;line-height:1.2}
   .owner .desc{flex-basis:100%;margin-left:20px;margin-top:2px;color:var(--muted);font-size:11px;line-height:1.3}
   .owner .ct{font:500 12px/1 Inter;color:var(--muted);font-variant-numeric:tabular-nums}
+  /* loading states — initial-load overlay + per-owner busy spinner */
+  @keyframes komboSpin{to{transform:rotate(360deg)}}
+  #loading-overlay{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;
+    justify-content:center;background:rgba(120,122,130,.14);
+    -webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);transition:opacity .3s ease}
+  #loading-overlay.hide{opacity:0;pointer-events:none}
+  #loading-overlay .spinner{width:44px;height:44px;border-radius:50%;
+    border:3px solid var(--line);border-top-color:var(--c-bolig);
+    animation:komboSpin .8s linear infinite}
+  .owner.loading{cursor:progress}
+  .owner.loading .ct{position:relative;color:transparent;min-width:15px}
+  .owner.loading .ct::after{content:"";position:absolute;right:0;top:50%;width:13px;height:13px;
+    margin-top:-6.5px;border-radius:50%;border:2px solid var(--line);border-top-color:var(--c-bolig);
+    animation:komboSpin .7s linear infinite}
   .bar{height:3px;border-radius:2px;margin-top:5px;background:var(--line);overflow:hidden}
   /* Start at 0% so we don't flash a full-width fill before updateStats()
      resizes it to the actual proportion. */
@@ -475,6 +489,9 @@
 </style>
 </head>
 <body>
+<!-- Initial-load overlay: visible from first paint, hidden by boot() once the
+     map layers have rendered. Only shown during the initial load. -->
+<div id="loading-overlay" role="status" aria-label="Laster kart"><div class="spinner"></div></div>
 <div id="app">
   <aside id="rail">
     <button class="rail-close" id="rail-close" type="button" title="Lukk sidepanelet" aria-label="Lukk sidepanelet">×</button>
@@ -1403,10 +1420,16 @@ function buildOwners(){
       if(active.has(o.key)) active.delete(o.key); else active.add(o.key);
       div.classList.toggle('off', !active.has(o.key));
       saveState();
-      // Active set only filters the MAP — popup proximity is property-wide
-      // (see outsideRanked). render() pulls in any pinned-target features
-      // whose agency is currently hidden.
-      render();
+      // Show the button's busy spinner, then defer the (synchronous, sometimes
+      // heavy) re-render to the next frame so the spinner actually paints
+      // before the main thread blocks. Active set only filters the MAP —
+      // popup proximity is property-wide (see outsideRanked); render() pulls in
+      // any pinned-target features whose agency is currently hidden.
+      div.classList.add('loading');
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        render();
+        div.classList.remove('loading');
+      }));
       // Debounced: report the settled selection after a burst of toggles.
       trackDebounced('filter-etat', 'Etatsfilter endret', {
         valgt: [...active].map(k => OWNER_CODE[k] || k).sort().join(',') || '(ingen)',
@@ -2738,6 +2761,19 @@ function applyMetadata(meta){
   }
 }
 
+// Initial-load overlay control. The overlay is visible by default in the HTML;
+// we hide it once the first render has painted the map layers (in boot), with a
+// failsafe so a hung fetch can't leave it stuck forever. It only ever hides —
+// never re-shown — so later re-renders (e.g. agency toggles) rely on their own
+// per-button spinner instead.
+function hideLoading(){
+  const el = document.getElementById('loading-overlay');
+  if (!el || el.classList.contains('hide')) return;
+  el.classList.add('hide');
+  setTimeout(() => { el.style.display = 'none'; }, 350);  // after the fade
+}
+setTimeout(hideLoading, 12000);  // failsafe: never leave the overlay stuck
+
 async function boot(){
   buildOwners();
   let fc=null;
@@ -2804,6 +2840,7 @@ async function boot(){
     if (a) map.setView([a[1], a[0]], Math.max(map.getZoom(), 17));
   }
   render();
+  hideLoading();   // map layers are in — drop the initial-load overlay
   if (searchTargetEi) {
     syncSearchClear();
     // Open the popup for the selected target, no fly (already centred).
