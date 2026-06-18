@@ -2741,26 +2741,23 @@ function applyMetadata(meta){
 async function boot(){
   buildOwners();
   let fc=null;
-  // Data source: the kombo-api service (single source of truth, regenerated
-  // weekly), with a graceful fallback to a co-located eiendommer.geojson so the
-  // map keeps working if the API is unreachable — and so a purely-static deploy
-  // (just this file + the geojson) still works.
-  const SOURCES=['https://kombo-api.ichiva.no/eiendommer.geojson','eiendommer.geojson'];
-  for(const url of SOURCES){
-    try{
-      const r=await fetch(url,{cache:'no-store'});
-      if(r.ok){
-        const j=await r.json();
-        if(j && j.features && j.features.length){ fc=j; break; }
-      }
-    }catch(e){ /* try next source */ }
-  }
+  // Data source: the kombo-api service is the single source of truth (no local
+  // data file — the abstraction is deliberate). If it's unreachable we show the
+  // embedded SAMPLE (inline in this file, not an external dependency) with a
+  // banner so the page degrades gracefully rather than rendering blank.
+  const API='https://kombo-api.ichiva.no/eiendommer.geojson';
+  try{
+    const r=await fetch(API,{cache:'no-store'});
+    if(r.ok){
+      const j=await r.json();
+      if(j && j.features && j.features.length) fc=j;
+    }
+  }catch(e){ /* fall through to SAMPLE */ }
   if(!fc || !fc.features || !fc.features.length){
     fc=SAMPLE;
     const b=document.getElementById('banner');
     b.style.display='block';
-    b.innerHTML='Viser <b>eksempeldata</b> — kunne ikke laste data fra '+
-      '<code>kombo-api</code> eller lokal <code>eiendommer.geojson</code>.';
+    b.innerHTML='Viser <b>eksempeldata</b> — kunne ikke laste data fra <code>kombo-api</code>.';
   }
   applyMetadata(fc.metadata);
   DATA=fc.features;
