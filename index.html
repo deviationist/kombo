@@ -663,7 +663,7 @@
        shifts with the left rail like they do. -->
   <div id="search-bar">
     <div class="search-input-wrap">
-      <input id="search-q" type="text" autocomplete="off" autofocus placeholder="Søk i kommunens eiendommer (adresse, matrikkel, bruksnavn) …">
+      <input id="search-q" type="text" autocomplete="off" placeholder="Søk i kommunens eiendommer (adresse, matrikkel, bruksnavn) …">
       <button id="search-clear" type="button" title="Tøm søket" aria-label="Tøm søket">×</button>
     </div>
     <div id="search-results"></div>
@@ -2707,6 +2707,12 @@ searchQ.addEventListener('input', () => {
   _searchT = setTimeout(() => doDataSearch(searchQ.value), 120);
 });
 searchQ.addEventListener('focus', () => { if (searchQ.value.trim()) doDataSearch(searchQ.value); });
+// Autofocus the search on load — but only on pointer-fine (desktop) devices.
+// On touch screens, focusing pops up the on-screen keyboard, which is intrusive;
+// there we wait for an explicit tap instead. (Replaces the input's `autofocus`.)
+if (!window.matchMedia || !window.matchMedia('(pointer: coarse)').matches) {
+  searchQ.focus();
+}
 // Enter = pick the first hit. Escape = clear.
 searchQ.addEventListener('keydown', e => {
   if (e.key === 'Enter') {
