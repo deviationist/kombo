@@ -25,7 +25,7 @@ kombo-api  ──(HTTP)──>  index.html  ──>  map in browser
 
 `index.html` loads its data at boot from the kombo-api service (see `boot()`):
 
-- `https://kombo-api.ichiva.no/eiendommer.geojson` — the single source of truth
+- `https://kombo-api.ichiva.no/features` — the single source of truth
   (regenerated weekly).
 
 If the API is unreachable, the map renders the embedded `SAMPLE` features
@@ -89,6 +89,15 @@ leaflet.heat + Tailwind Play CDN from CDN.
 - Leaflet's corner controls (`leaflet-top.leaflet-left`, etc.) auto-shift
   with the rails via CSS transform so nothing ends up hidden under an
   overlay.
+- **Floating search bar** (`#search-bar`, top-left past the zoom controls)
+  — searches the kommune dataset by address / matrikkel / bruksnavn
+  (`#search-q` input, `#search-results` dropdown). Mirrors the same
+  rail-shifting `translateX(var(--rail-w))` transform as the corner controls
+  so it never overlaps the left rail.
+- **Responsive (mobile/tablet)** — `@media` breakpoints at 1024 px and
+  760 px (the latter also `pointer:coarse`) reflow the rails/search bar for
+  small screens; the viewport meta disables page-zoom (`maximum-scale` /
+  `user-scalable`) so focusing an input doesn't trigger iOS auto-zoom.
 
 #### Theming + Tailwind
 

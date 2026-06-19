@@ -34,7 +34,7 @@ drinking-water catchment in ~20 neighbouring kommuner).
 
 `index.html` fetches its dataset at boot from the kombo-api service:
 
-- **`https://kombo-api.ichiva.no/eiendommer.geojson`** — the single source of
+- **`https://kombo-api.ichiva.no/features`** — the single source of
   truth (regenerated weekly).
 
 If the API is unreachable, an embedded sample dataset renders with a banner so
@@ -74,6 +74,9 @@ Tailwind Play CDN). Deployed automatically to GitHub Pages on every push to
   selection
 - Popup links straight into Grunnboken/eiendomsregisteret for each parcel
 
+A **floating search bar** (top-left, past the zoom controls) searches the whole
+dataset by address, matrikkel or bruksnavn and zooms straight to a hit.
+
 **Right sidebar** — "Mine punkter" (sammenligning):
 
 - Add a pin by typing an address (debounced Geonorge search) OR clicking
@@ -94,6 +97,8 @@ Tailwind Play CDN). Deployed automatically to GitHub Pages on every push to
 - Selections, map centre/zoom, sidebar collapse state persist in `localStorage`
   (key `kombo.v1`); pins under a separate key (`kombo.userPins.v1`)
 - Light/dark palette follows `prefers-color-scheme`; saved layer choice wins
+- **Responsive** down to phone/tablet — the rails and search bar reflow on
+  small screens (page-zoom is disabled so focusing a field doesn't auto-zoom)
 
 **Shareable URLs**: the current view round-trips through `location.hash` — paste
 any link to land on the same map state
