@@ -106,7 +106,10 @@ leaflet.heat + Tailwind Play CDN from CDN.
   read from CSS vars so they flip palettes without any JS dance.
 - Three basemaps: CARTO `dark_all` (Mørk), CARTO `light_all` (Lys), Esri
   World Imagery (Satellitt). Default base on first visit follows OS
-  preference; saved choice wins.
+  preference; saved choice wins. CARTO needs an API key (`CARTO_API_KEY`
+  in `index.html`, passed as `?key=`; public by nature, so referrer-restrict
+  it in the CARTO dashboard) — without it every tile is an "API KEY
+  REQUIRED" placeholder. Esri needs no key.
 - **Tailwind via Play CDN** with Preflight disabled (`corePlugins.preflight:
   false`) so it doesn't clobber the existing form/popup styling. Available
   for new markup; existing CSS uses CSS variables that double as Tailwind
