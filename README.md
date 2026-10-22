@@ -107,5 +107,17 @@ any link to land on the same map state
 ### Swapping the basemap
 
 Three basemaps ship by default — CARTO `dark_all`, CARTO `light_all`, and
-Esri World Imagery (all token-free). The GeoJSON output is standard, so it feeds
-any renderer — Google Maps, Mapbox, MapLibre, Leaflet, or QGIS.
+Esri World Imagery. CARTO needs a free API key (`CARTO_API_KEY` in
+`index.html`; referrer-restricted in the CARTO dashboard, since it ships to the
+browser), without it every tile is an "API KEY REQUIRED" placeholder. Esri is
+token-free. The GeoJSON output is standard, so it feeds any renderer — Google
+Maps, Mapbox, MapLibre, Leaflet, or QGIS.
+
+## Known issues
+
+- **One Oslo Havn row is spelled `Oslo havn KF`** (lower-case *h*) in the
+  kommune's source XLSX; the other 78 read `Oslo Havn KF`. The map matches
+  agencies by exact name, so that row likely misses the Oslo Havn filter and
+  colour. Fix it in **kombo-api** by normalising `eier` on import, not here.
+  *(Found 2026-10-22, oktober 2026 release.)*
+
