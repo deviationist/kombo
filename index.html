@@ -1269,16 +1269,27 @@ function render(){
   }else{
     if(map.hasLayer(clusterLayer)) map.removeLayer(clusterLayer);
     const areaWeight = state.mode==='heatArea';
-    const maxA = areaWeight ? Math.max(1,...mapRows.map(f=>f.properties.areal||0)) : 1;
+    // Normalise against the 99th-percentile area, not the max: a single
+    // 17 km² marka parcel otherwise pins 95% of features below weight 0.05.
+    // sqrt keeps ordinary buildings visible (linear left the city blank);
+    // larger is still brighter, and the biggest 1% saturate at 1.
+    let refA = 1;
+    if (areaWeight) {
+      const areas = mapRows.map(f=>f.properties.areal||0).filter(a=>a>0).sort((a,b)=>a-b);
+      if (areas.length) refA = Math.max(1, areas[Math.floor(.99*(areas.length-1))]);
+    }
     // featureAnchor prefers the Geonorge address point when available, so
     // polygons with an address contribute heat at the building's front door
     // rather than at an arbitrary first-vertex of the parcel boundary.
     const pts = mapRows.map(f=>{
       const a = featureAnchor(f); // [lon, lat]
-      const w = areaWeight ? Math.min(1, Math.sqrt((f.properties.areal||0)/maxA)) : .6;
+      const w = areaWeight ? Math.min(1, Math.sqrt((f.properties.areal||0)/refA)) : .6;
       return [a[1],a[0],w];
     });
-    heatLayer = L.heatLayer(pts,{radius:22,blur:18,maxZoom:14,minOpacity:.25,
+    // No opacity floor in Areal-vekt: leaflet.heat draws each point at
+    // max(weight, minOpacity), so a .25 floor flattened every small weight to
+    // the same value and the mode rendered as a copy of Tetthet.
+    heatLayer = L.heatLayer(pts,{radius:22,blur:18,maxZoom:14,minOpacity:areaWeight?0:.25,
       gradient:{0.2:'#173a4a',0.45:'#2d8f86',0.7:'#e0a54a',1:'#d4664a'}}).addTo(map);
   }
   updateStats(rows);
