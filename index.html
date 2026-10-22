@@ -898,11 +898,17 @@ map.on('popupclose', e => {
   const root = e.popup.getElement();
   if (root && root.querySelector('[data-feature-ei]')) setSearchTarget(null);
 });
-const darkLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
-  attribution:'&copy; OpenStreetMap &copy; CARTO', maxZoom:19, subdomains:'abcd'
+// CARTO basemaps require an API key (free tier, carto.com/basemaps/apikey);
+// without one they serve "API KEY REQUIRED" placeholder tiles. The key ships
+// to the browser regardless, so lock it down with a referrer restriction in
+// the CARTO dashboard rather than treating it as a secret.
+const CARTO_API_KEY = 'cb1_311f_2_e785934930e29ff413408015';
+const CARTO_ATTR = '&copy; OpenStreetMap contributors &copy; CARTO';
+const darkLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}{r}.png?key={key}',{
+  attribution:CARTO_ATTR, maxZoom:19, subdomains:'abcd', key:CARTO_API_KEY
 });
-const lightLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',{
-  attribution:'&copy; OpenStreetMap &copy; CARTO', maxZoom:19, subdomains:'abcd'
+const lightLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/light_all/{z}/{x}/{y}{r}.png?key={key}',{
+  attribution:CARTO_ATTR, maxZoom:19, subdomains:'abcd', key:CARTO_API_KEY
 });
 const satLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{
   attribution:'Tiles &copy; Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community', maxZoom:19
